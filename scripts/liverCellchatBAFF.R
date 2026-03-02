@@ -132,8 +132,8 @@ saveRDS(cellchat, file = "cellchat_liver_seurat_LOW_receptor.rds")
 
 
 #### load cellchat objects ####
-cellchatHR <- readRDS("cellchat_liver_seurat_HIGH_receptor.rds")
-cellchatLR <- readRDS("cellchat_liver_seurat_LOW_receptor.rds")
+cellchatHR <- readRDS("/data/Blizard-AlazawiLab/rk/cellchat/BAFF/cellchat_liver_seurat_HIGH_receptor.rds")
+cellchatLR <- readRDS("/data/Blizard-AlazawiLab/rk/cellchat/BAFF/cellchat_liver_seurat_LOW_receptor.rds")
 
 # Merge datasets for comparison
 object.list <- list(BAFFreceptorHigh = cellchatHR, BAFFreceptorLow = cellchatLR)
@@ -174,51 +174,76 @@ ggsave("/data/home/hdx044/plots/BAFF/Differntial_interaction_strength_2D_liver.p
 #### Compare the total number of interactions and interaction strength ####
 gg1 <- compareInteractions(cellchat, show.legend = F, group = c(1,2))
 gg2 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), measure = "weight")
-gg1 + gg2
 
-# Heatmap showing differential number of interactions or interaction strength
-# Generate the two heatmaps
-ht1 <- netVisual_heatmap(cellchat)  # Default is "count"
-ht2 <- netVisual_heatmap(cellchat, measure = "weight")  # For interaction strength
+ggp <- gg1 +
+ theme_classic(base_size = 12) +
+ theme(
+  axis.text.x = element_text(angle = 45, hjust = 1),
+  axis.line = element_line(color = "black"),
+  legend.position = "right",
+  legend.direction = "vertical",
+  legend.title = element_text(size = 10),
+  legend.text = element_text(size = 8),
+  legend.key.size = unit(1.5, "lines")
+ )
 
-# Combine the heatmaps side by side with a gap
-combined_heatmap <- ht1 + ht2
+ggp
 
-# Open SVG device to save the output
-svg(filename = "/data/home/hdx044/plots/cellchat/liver/Signalling_Heatmap_LIVER.svg", width = 12, height = 6)
+# Save high-resolution SVG
+ggsave(
+ filename = "cellcahtBAFFinteractions.svg",
+ plot = ggp,
+ device = "svg",
+ path = "/data/home/hdx044/plots/BAFF",
+ width = 3,     
+ height = 4,
+ units = "in"
+)
 
-# Draw the combined heatmap
-draw(combined_heatmap, ht_gap = unit(0.5, "cm"))
+# Identify dysfunctional signaling by using differential expression analysis
 
-# Close the device to write the file
-dev.off()
+# define a positive dataset, i.e., the dataset with positive fold change against the other dataset
+pos.dataset = "BAFFreceptorHigh"
 
-# Heatmap showing F0 and F123 interaction strength
-h1 <- netVisual_heatmap(cellchatF0, measure = "weight")
-h2 <- netVisual_heatmap(cellchatF123, measure = "weight")
-combined_heatmap <- draw(h1 + h2, ht_gap = unit(0.5, "cm", ))
-png(file = "~/plots/cellchat/liver/NoFibrosis_FibrosisSignalling_Heatmap_LIVER.png", width =3000, height = 1500, res = 300)
-draw(combined_heatmap, ht_gap = unit(0.5, "cm"))
-dev.off()
+# define a char name used for storing the results of differential expression analysis
+features.name = paste0(pos.dataset, ".merged")
 
+# perform differential expression analysis 
+cellchat <- identifyOverExpressedGenes(cellchat, group.dataset = "datasets", pos.dataset = pos.dataset, features.name = features.name, only.pos = FALSE, thresh.pc = 0.1, thresh.fc = 0.05,thresh.p = 0.05, group.DE.combined = FALSE) 
 
-# Heatmap showing F1 interactions or interaction strength
-h1 <- netVisual_heatmap(cellchatF123)
-h2 <- netVisual_heatmap(cellchatF123, measure = "weight")
-combined_heatmap <- draw(h1 + h2, ht_gap = unit(0.5, "cm", ))
-png(file = "~/plots/cellchat/liver/FibrosisSignalling_Heatmap_LIVER.png", width =3000, height = 1500, res = 300)
-draw(combined_heatmap, ht_gap = unit(0.5, "cm"))
-dev.off()
+# map the results of differential expression analysis onto the inferred cell-cell communications to easily manage/subset the ligand-receptor pairs of interest
+net <- netMappingDEG(cellchat, features.name = features.name, variable.all = TRUE)
 
-# Extract the inferred cellular communication
-df.net <- subsetCommunication(cellchatF123)
-write.csv(df.net, "/data/home/hdx044/files/cellchat/LIVER//InteractionInLIVER.csv")
+# extract the ligand-receptor pairs with upregulated ligands in BAFFreceptorHigh
+net.up <- subsetCommunication(cellchat, net = net, datasets = "BAFFreceptorHigh",ligand.logFC = 0.05, receptor.logFC = NULL)
 
+write.csv(net.up, '/data/home/hdx044/files/cellchat/BAFF/net_up_baff_receptor_high.csv')
 
+# extract the ligand-receptor pairs with downregulated ligands in BAFFreceptorHigh
+net.down <- subsetCommunication(cellchat, net = net, datasets = "BAFFreceptorHigh",ligand.logFC = -0.05, receptor.logFC = NULL)
 
+write.csv(net.down, '/data/home/hdx044/files/cellchat/BAFF/net_down_baff_receptor_high.csv')
 
+# Visualize the identified up-regulated and down-regulated signaling ligand-receptor pairs
+pairLR.use.up = net.up[, "interaction_name", drop = F]
 
+# Comparing communications on a merged object
+gg1 <- netVisual_bubble(cellchat, sources.use = c(9), targets.use = c(1:24),  comparison = c(1, 2), max.dataset = 1, title.name = "Increased signalling", angle.x = 90, remove.isolate = T, dot.size.min = 4,
+                        dot.size.max = 5,
+                        font.size = 16,
+                        font.size.title = 14,
+                        color.text = c("maroon", "mistyrose"))
+# Increase legend font size
+gg1 <- gg1 + theme(
+ legend.title = element_text(size = 16),   # title font
+ legend.text  = element_text(size = 14),   # text font
+ legend.key.size = unit(1.5, "lines")      # enlarge legend symbols
+)
 
+gg1
+
+# visualize the enriched ligands in the second condition
+computeEnrichmentScore(net.up, species = 'human', variable.both = TRUE)
 
 
 

@@ -5,6 +5,7 @@ library(dplyr)
 library(tidyr)
 library(tibble)
 library(SeuratExtend)
+library(escape)
 
 # Load seurat object
 SeuObj <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/SeuObjx.rds')
@@ -190,6 +191,390 @@ ggsave(
  height = 4,
  units = "in"
 )
+
+#### Create BAFF receptor expressing and absent cell obj ####
+# BAFF and its receptors clusters
+liverBaffreceptorObj <- subset(liverBaff , subset = seurat_clusters %in% c('8', '19', '22', '27', '29'))
+
+DefaultAssay(liverBaffreceptorObj) <- "RNA"
+
+baff_receptors <- c("TNFRSF13C", "TNFRSF13B", "TNFRSF17")
+
+# Keep only genes present
+genes_present <- intersect(baff_receptors, rownames(liverBaffreceptorObj))
+if (length(genes_present) == 0) {
+ stop("None of the BAFF receptor genes are present in the object.")
+}
+
+# Get expression matrix (assumes Seurat and using normalized 'data' slot; adjust if needed)
+expr <- tryCatch(
+ GetAssayData(liverBaffreceptorObj, slot = "data")[genes_present, , drop = FALSE],
+ error = function(e) liverBaffreceptorObj[genes_present, , drop = FALSE]  # if it's a plain matrix/dgCMatrix
+)
+
+# Compute per-cell max expression across the BAFF receptor genes
+baff_expr <- matrixStats::colMaxs(as.matrix(expr))
+
+# Label High if any receptor >= 0.25, otherwise Low
+liverBaffreceptorObj$BAFFreceptorStatus <- ifelse(baff_expr >= 0.25, "High", "Low")
+
+# Quick sanity checks
+table(liverBaffreceptorObj$BAFFreceptorStatus)
+
+# check obj
+Idents(liverBaffreceptorObj) <- 'BAFFreceptorStatus'
+VlnPlot2(liverBaffreceptorObj, features = baff_receptors)
+
+#### Pathway analysis ####
+# Getting genes set
+C2 <- getGeneSets(library = "C2")
+
+# Filter gene sets with names related to Reactome (case-sensitive)
+reactome_sets <- C2[sapply(names(C2), function(x) grepl("REACTOME", x))]
+
+# Check the filtered Reactome sets
+length(reactome_sets)  # Number of Reactome gene sets
+
+# Run Escape on Reactome pathway
+liverBaffreceptorObj <- runEscape(liverBaffreceptorObj,
+                                  method = "UCell",
+                                  gene.sets = reactome_sets, 
+                                  groups = 5000, 
+                                  min.size = 0,
+                                  new.assay.name = "escape.UCell")
+
+saveRDS(liverBaffreceptorObj, '/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObj.rds')
+
+liverBaffreceptorObj <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObj.rds')
+
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+ucell_mat <- GetAssayData(
+ liverBaffreceptorObj,
+ assay = "escape.UCell",
+ slot = "data"
+)
+
+ucell_df <- as.data.frame(
+ t(as.matrix(ucell_mat)),
+ check.names = FALSE
+)
+
+# USE CELL TYPE NAMES HERE
+ucell_df$cluster <- factor(liverBaffreceptorObj$cell_type_with_cluster)
+
+pathway_cluster_means <- ucell_df %>%
+ group_by(.data$cluster) %>%
+ summarise(across(everything(), ~mean(.x)), .groups = "drop") %>%
+ relocate(cluster)
+
+long_means <- pathway_cluster_means %>%
+ pivot_longer(
+  -cluster,
+  names_to = "pathway",
+  values_to = "mean_score"
+ )
+
+write.csv(
+ long_means,
+ file = "/data/home/hdx044/files/BAFF/All_pathways_by_celltype_BAFF.csv",
+ row.names = FALSE
+)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ComplexHeatmap)
+library(circlize)
+
+# Define UCell Cutoffs
+
+UCELL_STRONG <- 0.20    # Strong enrichment
+UCELL_MODERATE <- 0.15  # Moderate enrichment  
+UCELL_WEAK <- 0.10      # Weak enrichment
+
+cat("UCell Cutoffs (based on literature):\n")
+cat("  Strong:   > 0.20\n")
+cat("  Moderate: > 0.15\n")
+cat("  Weak:     > 0.10\n\n")
+
+# Get Max Scores Per Pathway
+
+pathway_max_scores <- long_means %>%
+ group_by(pathway) %>%
+ summarise(
+  max_score = max(mean_score),
+  mean_score = mean(mean_score)
+ ) %>%
+ arrange(desc(max_score))
+
+# Filter Meaningful Pathways
+
+# Keep pathways that reach moderate threshold in at least one cluster
+pathways_meaningful <- pathway_max_scores %>%
+ filter(max_score > UCELL_MODERATE) %>%
+ pull(pathway)
+
+cat(sprintf("Pathways > 0.15: %d\n\n", length(pathways_meaningful)))
+
+# EXPANDED PATHWAY FILTERING
+
+# Define comprehensive pathway categories relevant to MASH and B cell biology
+
+pathway_categories <- list(
+ 
+ # FIBROSIS-RELATED
+ fibrosis = c(
+  "TGF", "TGFB", "PDGF", "WNT", "BMP", "VEGF",
+  "COLLAGEN", "ECM", "EXTRACELLULAR.MATRIX", "MATRIX",
+  "FIBRONECTIN", "EMT", "EPITHELIAL", "FIBROSIS", "FIBROTIC"
+ ),
+ 
+ # B CELL ACTIVATION & SIGNALING
+ activation = c(
+  "B.CELL", "BCR", "B.LYMPHOCYTE",
+  "CD40", "BAFF", "TNFSF13", "APRIL",
+  "ACTIVATION", "ANTIGEN.RECEPTOR",
+  "NF.KAPPA.B", "NFKB", "PI3K", "AKT",
+  "MTOR", "JAK", "STAT"
+ ),
+ 
+ # PROLIFERATION & CELL CYCLE
+ proliferation = c(
+  "PROLIFERATION", "CELL.CYCLE", "MITOSIS", "MITOTIC",
+  "G1.S", "G2.M", "CYCLIN", "CDK",
+  "DNA.REPLICATION", "S.PHASE", "M.PHASE",
+  "E2F", "RB1", "P53"
+ ),
+ 
+ # INFLAMMATION & CYTOKINES
+ inflammation = c(
+  "INFLAMMATION", "INFLAMMATORY",
+  "TNF", "TNFSF", "IL.1", "IL.6", "IL.10",
+  "INTERFERON", "IFN", "CYTOKINE",
+  "CHEMOKINE", "CCL", "CXCL"
+ ),
+ 
+ # IMMUNE RESPONSE
+ immune = c(
+  "IMMUNE", "IMMUNOLOGICAL",
+  "COMPLEMENT", "C3", "C5",
+  "MHC", "ANTIGEN.PRESENTATION",
+  "COSTIMULATORY", "CD80", "CD86"
+ ),
+ 
+ # APOPTOSIS & SURVIVAL
+ survival = c(
+  "APOPTOSIS", "APOPTOTIC", "CELL.DEATH",
+  "SURVIVAL", "BCL", "CASPASE",
+  "INTRINSIC.APOPTOSIS", "EXTRINSIC.APOPTOSIS"
+ ),
+ 
+ # METABOLISM
+ metabolism = c(
+  "METABOLISM", "METABOLIC", "GLYCOLYSIS",
+  "OXIDATIVE.PHOSPHORYLATION", "OXPHOS",
+  "FATTY.ACID", "LIPID", "GLUCOSE"
+ ),
+ 
+ # PLASMA CELL DIFFERENTIATION
+ plasma_cell = c(
+  "PLASMA.CELL", "ANTIBODY", "IMMUNOGLOBULIN",
+  "PRDM1", "BLIMP", "XBP1", "IRF4",
+  "SECRETION", "ER.STRESS", "UPR"
+ )
+)
+
+# Create combined pattern for each category
+category_patterns <- lapply(pathway_categories, function(keywords) {
+ paste(keywords, collapse = "|")
+})
+
+# FILTER PATHWAYS BY CATEGORY
+
+cat("\n========== PATHWAY FILTERING BY CATEGORY ==========\n\n")
+
+pathway_results <- list()
+
+for (cat_name in names(category_patterns)) {
+ 
+ pattern <- category_patterns[[cat_name]]
+ 
+ pathways_cat <- pathway_max_scores %>%
+  filter(
+   max_score > UCELL_MODERATE,  # Still use 0.15 cutoff
+   grepl(pattern, pathway, ignore.case = TRUE)
+  ) %>%
+  arrange(desc(max_score))
+ 
+ pathway_results[[cat_name]] <- pathways_cat
+ 
+ cat(sprintf("%s pathways (>0.15): %d\n", 
+             toupper(cat_name), nrow(pathways_cat)))
+ 
+ if (nrow(pathways_cat) > 0) {
+  cat("  Top 5:\n")
+  for (i in 1:min(5, nrow(pathways_cat))) {
+   cat(sprintf("    %.3f - %s\n", 
+               pathways_cat$max_score[i],
+               substr(pathways_cat$pathway[i], 1, 70)))
+  }
+ }
+ cat("\n")
+}
+
+# COMBINE ALL RELEVANT PATHWAYS
+
+# Combine all categories (removing duplicates)
+pathways_combined <- unique(c(
+ pathway_results$fibrosis$pathway,
+ pathway_results$activation$pathway,
+ pathway_results$proliferation$pathway,
+ pathway_results$inflammation$pathway,
+ pathway_results$immune$pathway,
+ pathway_results$survival$pathway,
+ pathway_results$metabolism$pathway,
+ pathway_results$plasma_cell$pathway
+))
+
+cat(sprintf("TOTAL UNIQUE PATHWAYS (all categories): %d\n\n", 
+            length(pathways_combined)))
+
+# ANNOTATE PATHWAYS WITH CATEGORIES
+
+pathway_annotations <- pathway_max_scores %>%
+ filter(pathway %in% pathways_combined) %>%
+ mutate(
+  category = case_when(
+   grepl(category_patterns$fibrosis, pathway, ignore.case = TRUE) ~ "Fibrosis",
+   grepl(category_patterns$activation, pathway, ignore.case = TRUE) ~ "B cell activation",
+   grepl(category_patterns$proliferation, pathway, ignore.case = TRUE) ~ "Proliferation",
+   grepl(category_patterns$inflammation, pathway, ignore.case = TRUE) ~ "Inflammation",
+   grepl(category_patterns$plasma_cell, pathway, ignore.case = TRUE) ~ "Plasma cell",
+   grepl(category_patterns$immune, pathway, ignore.case = TRUE) ~ "Immune response",
+   grepl(category_patterns$survival, pathway, ignore.case = TRUE) ~ "Survival/Apoptosis",
+   grepl(category_patterns$metabolism, pathway, ignore.case = TRUE) ~ "Metabolism",
+   TRUE ~ "Other"
+  )
+ ) %>%
+ arrange(category, desc(max_score))
+
+# CREATE COMPREHENSIVE HEATMAP
+
+heatmap_data_full <- pathway_cluster_means %>%
+ select(cluster, all_of(pathways_combined)) %>%
+ as.data.frame()
+
+rownames(heatmap_data_full) <- heatmap_data_full$cluster
+heatmap_matrix_full <- t(as.matrix(heatmap_data_full[, -1]))
+
+# Create category annotation for heatmap
+pathway_category_anno <- pathway_annotations %>%
+ select(pathway, category) %>%
+ arrange(match(pathway, rownames(heatmap_matrix_full)))
+
+library(dplyr)
+library(stringr)
+library(pheatmap)
+library(viridis)
+
+# make sure matrix rownames match "pathway"
+pathway_category_anno <- pathway_annotations %>%
+ select(pathway, category)
+
+categories_to_plot <- c(
+ "Fibrosis",
+ "B cell activation",
+ "Proliferation",
+ "Inflammation",
+ "Plasma cell",
+ "Immune response",
+ "Survival/Apoptosis",
+ "Metabolism"
+)
+
+# Directory to save heatmaps
+outdir <- "/data/home/hdx044/plots/BAFF/category_heatmaps/"
+dir.create(outdir, showWarnings = FALSE)
+
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+library(viridis)
+library(grid)
+library(officer)
+library(rvg)
+
+outdir <- "/data/home/hdx044/plots/BAFF/category_heatmaps/"
+dir.create(outdir, showWarnings = FALSE)
+
+# Single PPT file path
+ppt_all <- file.path(outdir, "all_categories_heatmaps.pptx")
+doc <- read_pptx()  # <-- open once
+
+for (cat in categories_to_plot) {
+ # Safe category label for messages only
+ safe_cat <- gsub("[^A-Za-z0-9]+", "_", cat)
+ 
+ # Subset matrix for this category
+ cat_paths <- pathway_category_anno %>%
+  filter(category == cat) %>%
+  pull(pathway)
+ 
+ sub_mat <- heatmap_matrix_full[
+  rownames(heatmap_matrix_full) %in% cat_paths, , drop = FALSE
+ ]
+ if (nrow(sub_mat) == 0) {
+  message("Skip empty category: ", cat)
+  next
+ }
+ 
+ # Color function (fix breaks = colors)
+ col_fun <- colorRamp2(
+  seq(min(sub_mat), max(sub_mat), length.out = 5),
+  viridis::viridis(5)
+ )
+ 
+ # Build ComplexHeatmap
+ p <- Heatmap(
+  sub_mat,
+  name = "UCell",
+  col = col_fun,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,
+  
+  # Keep full Reactome names; adjust font if needed
+  row_names_gp = gpar(fontsize = 6),
+  row_names_max_width = unit(9, "cm"),
+  
+  # Column labels
+  column_names_rot = 90,
+  column_names_gp = gpar(fontsize = 10),
+  
+  # Control block size (cell height/width equivalents)
+  height = unit(nrow(sub_mat) * 3.5, "mm"),
+  width  = unit(ncol(sub_mat) * 15,  "mm"),
+  
+  column_title = paste("Category:", cat)
+ )
+ 
+ # ---- Add a slide for this category and put the heatmap on it
+ doc <- add_slide(doc, layout = "Blank", master = "Office Theme")
+ doc <- ph_with(
+  doc,
+  value = dml(code = { draw(p) }),
+  location = ph_location(left = 0.5, top = 0.5, width = 9, height = 5)
+ )
+ 
+ message("Added to PPT (slide): ", safe_cat)
+}
+
+# Save ONE PPT containing all slides
+print(doc, target = ppt_all)
+message("Saved single PPT: ", ppt_all)
+
 
 #### Create cellchat obj ####
 # Split Seurat Object Based on BAFF Receptor Expression Levels
