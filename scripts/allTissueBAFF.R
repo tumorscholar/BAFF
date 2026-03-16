@@ -14,7 +14,7 @@ DefaultAssay(SeuObj) <- "RNA"
 
 baff_signaling_genes <- c(
  "TNFRSF13C",  # BAFF-R (BAFF receptor)
- "TNFRSF13B",  # TACI (Transmembrane activator and CAML interactor)
+ "TNFRSF13B",  # TACI
  "TNFRSF17",   # BCMA
  "TNFSF13B"    # BAFF (B cell–activating factor)
 )
@@ -245,6 +245,7 @@ liverBaffreceptorObj <- runEscape(liverBaffreceptorObj,
 
 saveRDS(liverBaffreceptorObj, '/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObj.rds')
 
+#### load liver BAFF obj ####
 liverBaffreceptorObj <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObj.rds')
 
 library(dplyr)
@@ -575,6 +576,12 @@ for (cat in categories_to_plot) {
 print(doc, target = ppt_all)
 message("Saved single PPT: ", ppt_all)
 
+
+write.csv(
+ heatmap_matrix_full,
+ file = "/data/home/hdx044/files/BAFF/pathway_cluster_heatmap_metadata.csv",
+ row.names = TRUE
+)
 
 #### Create cellchat obj ####
 # Split Seurat Object Based on BAFF Receptor Expression Levels
