@@ -6,6 +6,10 @@ library(tidyr)
 library(tibble)
 library(SeuratExtend)
 library(escape)
+library(ComplexHeatmap)
+library(circlize)
+library(pheatmap)
+library(viridisLite)
 
 # Load seurat object
 SeuObj <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/SeuObjx.rds')
@@ -81,6 +85,31 @@ LIVER$cell_type_with_cluster <- labs_sorted
 Idents(LIVER) <- "cell_type_with_cluster"
 levels(LIVER)
 
+# Ploting UMAP for cell_type_with_cluster
+ggp <- DimPlot(LIVER, reduction = "umap", raster = FALSE, label = F, group.by = "cell_type_with_cluster") +
+ ggtitle("Liver clusters") +
+ theme_classic(base_size = 12) +
+ theme(
+  axis.text.x = element_text(angle = 90, hjust = 1),
+  axis.line = element_line(color = "black"),
+  legend.position = "right",
+  legend.direction = "vertical",
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 12),
+  legend.key.size = unit(0.8, "lines"),  # reduce point size in legend
+  legend.spacing.y = unit(0.8, "cm")     # reduce spacing between items
+ ) +
+ guides(color = guide_legend(override.aes = list(size = 3), ncol = 1))  # one column legend, small dots
+
+ggp
+
+# Final TIFF for journal
+setwd("/data/home/hdx044/plots/BAFF")
+tiff("liver_cell_type.tiff", width=22, height=15, units="cm", res=600, compression="lzw")
+print(ggp)
+dev.off()
+
+
 ggp <- DotPlot2(LIVER, features = baff_signaling_genes, color_scheme = "BuRd") +
  ggtitle("BAFF and its receptors") +
  coord_flip()+ 
@@ -129,24 +158,109 @@ ggsave(
  units = "in"
 )
 
+#### Generate count plots Stage wise ####
+# Set identities
+Idents(LIVER) <- 'cluster'
+
+#  Order clusters in metadata column directly
+LIVER$cluster <- factor(
+ LIVER$cluster,
+ levels = c('C0','C1','C2','C3','C4','C5','C6','C7','C8','C9','C10',
+            'C11','C12','C13','C14','C15','C16','C17','C18','C19','C20',
+            'C21','C22','C23','C24','C25','C26','C27','C28','C29')
+)
+
+# ALSO order the active.ident (for downstream Seurat functions)
+LIVER@active.ident <- factor(
+ LIVER@active.ident,
+ levels = c('C0','C1','C2','C3','C4','C5','C6','C7','C8','C9','C10',
+            'C11','C12','C13','C14','C15','C16','C17','C18','C19','C20',
+            'C21','C22','C23','C24','C25','C26','C27','C28','C29')
+)
+
+# Order Stage
+LIVER$Stage <- factor(
+ LIVER$Stage,
+ levels = c("Healthy", "No_fibrosis", "Fibrosis")
+)
+
+# Create summary - clusters will now be ordered
+summary <- LIVER@meta.data %>%
+ group_by(cluster, Stage) %>%
+ summarise(count = n(), .groups = 'drop') %>%
+ group_by(cluster) %>%
+ mutate(proportion = count / sum(count)) %>%
+ ungroup()
+
+# Create color palette
+viridis_cols <- viridis(length(unique(summary$Stage)))
+names(viridis_cols) <- levels(LIVER$Stage)  # Use levels, not unique
+
+# Plot
+ggp <- ggplot(summary, aes(x = cluster, y = proportion, fill = Stage)) +
+ geom_bar(stat = "identity", position = "stack") +
+ scale_fill_manual(values = viridis_cols) +
+ scale_y_continuous(expand = c(0, 0)) +
+ labs(
+  title = "Proportions of cells in each cluster by stage",
+  x = "Cluster", 
+  y = "Proportion of Cells"
+ ) +
+ theme_classic(base_size = 12) +
+ theme(
+  axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+  axis.line = element_line(color = "black"),
+  legend.position = "right",
+  legend.direction = "vertical",
+  legend.title = element_text(size = 12),
+  legend.text = element_text(size = 12),
+  legend.key.size = unit(0.8, "lines"),
+  legend.spacing.y = unit(0.5, "cm")
+ ) +
+ guides(fill = guide_legend(override.aes = list(size = 3), ncol = 1))
+
+# Display plot
+print(ggp)
+
+setwd("/data/home/hdx044/plots/BAFF")
+tiff("liver_cluster_Proportion_by_Stage.tiff", width=25, height=10, units="cm", res=600, compression="lzw")
+print(ggp)
+dev.off()
+
+
+# Save high-resolution SVG
+ggsave(
+ filename = "liver_cluster_Proportion_by_Stage.svg",
+ plot = ggp,
+ device = "svg",
+ path = "/data/home/hdx044/plots/BAFF",
+ width = 5,     
+ height = 3,
+ units = "in",
+ dpi = 600
+)
+
+
+saveRDS(LIVER, '/data/Blizard-AlazawiLab/rk/seurat/LIVER.rds')
+
 # BAFF and its receptors clusters
 liverBaff <- subset(LIVER, subset = cluster %in% c("C3", "C5", "C8", "C10", "C11", "C13", "C14", "C19", "C22", "C23", "C27", "C29"))
 
 saveRDS(liverBaff, '/data/Blizard-AlazawiLab/rk/seurat/liverBaff.rds')
 
-#### load liver BAFF obj ####
+#### Load liver BAFF obj ####
 liverBaff <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/liverBaff.rds')
 
-Idents(liverBaff) <- "Stage"
+Idents(liverBaff) <- "StageSep"
 DefaultAssay(liverBaff) <- "RNA"
 
 # Arrange Stage in the desired order
-liverBaff$Stage <- factor(
- liverBaff$Stage,
- levels = c("Healthy", "No_fibrosis", "Fibrosis")
+liverBaff$StageSep <- factor(
+ liverBaff$StageSep,
+ levels = c("H", "F0", "F1", "F2", "F3")
 )
 
-ggp <- DotPlot2(liverBaff, features = baff_signaling_genes, color_scheme = "BuRd", group.by = "Stage") +
+ggp <- DotPlot2(liverBaff, features = baff_signaling_genes, color_scheme = "BuRd", group.by = "StageSep") +
  ggtitle("BAFF and its receptors") +
  guides(
   color = guide_colorbar(order = 1),  # Average Expression on top
@@ -156,12 +270,12 @@ ggp
 
 # Save high-resolution SVG
 ggsave(
- filename = "LiverBAFFandReceptorsStage.svg",
+ filename = "LiverBAFFandReceptorsStageSep.svg",
  plot = ggp,
  device = "svg",
  path = "/data/home/hdx044/plots/BAFF",
- width = 3,     
- height = 4,
+ width = 5,     
+ height = 5,
  units = "in"
 )
 
@@ -173,7 +287,7 @@ baff_signaling_ADTs <- c(
 
 DefaultAssay(liverBaff) <- "ADTonly"
 
-ggp <- DotPlot2(liverBaff, features = baff_signaling_ADTs, color_scheme = "BuRd", group.by = "Stage") +
+ggp <- DotPlot2(liverBaff, features = baff_signaling_ADTs, color_scheme = "BuRd", group.by = "StageSep") +
  ggtitle("BAFF and its receptors") +
  guides(
   color = guide_colorbar(order = 1),  # Average Expression on top
@@ -225,6 +339,147 @@ table(liverBaffreceptorObj$BAFFreceptorStatus)
 Idents(liverBaffreceptorObj) <- 'BAFFreceptorStatus'
 VlnPlot2(liverBaffreceptorObj, features = baff_receptors)
 
+
+#### Volcano plot HIGH vs LOW BAFF Receptor B Cells ####
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+cat("Performing differential expression analysis...\n")
+
+# Step 1: Differential Expression Analysis
+# Set identity to BAFFreceptorStatus
+Idents(liverBaffreceptorObj) <- "BAFFreceptorStatus"
+
+# Perform DE analysis (HIGH vs LOW)
+DE_results <- FindMarkers(
+ liverBaffreceptorObj,
+ ident.1 = "High",
+ ident.2 = "Low",
+ test.use = "wilcox",  # Wilcoxon rank-sum test
+ logfc.threshold = 0,  # Include all genes for volcano
+ min.pct = 0,          # Include all genes
+ verbose = TRUE
+)
+
+# Add gene names as column
+DE_results$gene <- rownames(DE_results)
+
+# Step 2: Add Classification Column
+
+DE_results <- DE_results %>%
+ mutate(
+  direction = case_when(
+   avg_log2FC > 0.5 & p_val_adj < 0.05 ~ "Upregulated in HIGH",
+   avg_log2FC < -0.5 & p_val_adj < 0.05 ~ "Upregulated in LOW",
+   TRUE ~ "Not Significant"
+  ),
+  neg_log10_padj = -log10(p_val_adj)
+ )
+
+# Summary
+cat("\nDifferential Expression Summary:\n")
+print(table(DE_results$direction))
+
+# Select top 10 up and top 10 down among significant genes
+top_up <- DE_results %>%
+ dplyr::filter(p_val_adj < 0.05, avg_log2FC > 5) %>%
+ dplyr::arrange(p_val_adj) %>%
+ dplyr::slice_head(n = 15)
+
+top_down <- DE_results %>%
+ dplyr::filter(p_val_adj < 0.05, avg_log2FC < -0.5) %>%
+ dplyr::arrange(p_val_adj) %>%
+ dplyr::slice_head(n = 10)
+
+label_genes <- dplyr::bind_rows(top_up, top_down) %>%
+ dplyr::distinct(gene, .keep_all = TRUE)
+
+cat(sprintf("\nLabeling %d genes (top 10 up + top 10 down)\n", nrow(label_genes)))
+
+# Step 4: Create Volcano Plot
+
+# Define colors
+colors <- c(
+ "Upregulated in HIGH" = "#E41A1C",
+ "Upregulated in LOW" = "#377EB8",
+ "Not Significant" = "grey70"
+)
+
+# Create plot
+p_volcano <- ggplot(DE_results, aes(x = avg_log2FC, y = neg_log10_padj)) +
+ 
+ # Points
+ geom_point(aes(color = direction), alpha = 0.6, size = 1.5) +
+ 
+ # Threshold lines
+ geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", 
+            color = "black", size = 0.5) +
+ geom_hline(yintercept = -log10(0.05), linetype = "dashed", 
+            color = "black", size = 0.5) +
+ 
+ # Labels for key genes
+ geom_text_repel(
+  data = label_genes,
+  aes(label = gene),
+  size = 3,
+  max.overlaps = 20,
+  box.padding = 0.5,
+  point.padding = 0.3,
+  segment.color = "grey50",
+  segment.size = 0.3,
+  min.segment.length = 0
+ ) +
+ 
+ # Colors
+ scale_color_manual(values = colors) +
+ 
+ # Theme
+ theme_classic(base_size = 12) +
+ theme(
+  legend.position = "top",
+  legend.title = element_blank(),
+  plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+  axis.line = element_line(color = "black"),
+  panel.grid.major = element_line(color = "grey90", size = 0.2)
+ ) +
+ 
+ # Labels
+ labs(
+  title = "Differential gene: HIGH vs LOW expressing BAFF receptors B cells",
+  x = "log2 Fold Change (HIGH vs LOW)",
+  y = "-log10(Adjusted P-value)",
+  caption = "Dashed lines: |logFC| > 0.5, adjusted p < 0.05"
+ ) +
+ 
+ # Axis limits
+ xlim(c(min(DE_results$avg_log2FC) - 0.5, max(DE_results$avg_log2FC) + 0.5)) +
+ ylim(c(0, max(DE_results$neg_log10_padj) * 1.1))
+
+# Display plot
+print(p_volcano)
+
+# Save plot
+ggsave(
+ "/data/home/hdx044/plots/BAFF/volcano_plot_HIGH_vs_LOW_BAFFreceptor.png", 
+ p_volcano, 
+ width = 12, 
+ height = 5,
+ dpi = 300
+)
+
+# Step 5: Export Results
+# Export significant genes only
+DE_sig <- DE_results %>%
+ filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.5) %>%
+ arrange(desc(abs(avg_log2FC)))
+
+write.csv(DE_sig, "/data/home/hdx044/files/BAFF/DE_HIGH_vs_LOW_BAFFreceptor_significant.csv", row.names = FALSE)
+cat("Saved: DE_HIGH_vs_LOW_BAFFreceptor_significant.csv\n")
+
+
 #### Pathway analysis ####
 # Getting genes set
 C2 <- getGeneSets(library = "C2")
@@ -245,12 +500,8 @@ liverBaffreceptorObj <- runEscape(liverBaffreceptorObj,
 
 saveRDS(liverBaffreceptorObj, '/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObj.rds')
 
-#### load liver BAFF obj ####
+#### Load liver BAFF receptor obj ####
 liverBaffreceptorObj <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObj.rds')
-
-library(dplyr)
-library(tidyr)
-library(pheatmap)
 
 ucell_mat <- GetAssayData(
  liverBaffreceptorObj,
@@ -258,37 +509,30 @@ ucell_mat <- GetAssayData(
  slot = "data"
 )
 
-ucell_df <- as.data.frame(
- t(as.matrix(ucell_mat)),
- check.names = FALSE
-)
+ucell_df <- as.data.frame(t(ucell_mat))
+ucell_df$cell_id <- rownames(ucell_df)
 
-# USE CELL TYPE NAMES HERE
-ucell_df$cluster <- factor(liverBaffreceptorObj$cell_type_with_cluster)
+# Add BAFFreceptorStatus to ucell_df
+ucell_df$BAFFreceptorStatus <- liverBaffreceptorObj$BAFFreceptorStatus
 
-pathway_cluster_means <- ucell_df %>%
- group_by(.data$cluster) %>%
- summarise(across(everything(), ~mean(.x)), .groups = "drop") %>%
- relocate(cluster)
+# Calculate mean pathway scores by BAFF receptor status
+pathway_BAFFreceptorStatus_means <- ucell_df %>%
+ group_by(BAFFreceptorStatus) %>%
+ summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE)), .groups = "drop")
 
-long_means <- pathway_cluster_means %>%
+# Check the result
+print(pathway_BAFFreceptorStatus_means)
+
+# Pivot to long format - NOTE: No 'cluster' column anymore!
+long_means <- pathway_BAFFreceptorStatus_means %>%
  pivot_longer(
-  -cluster,
+  -BAFFreceptorStatus,  # CHANGED from -cluster
   names_to = "pathway",
   values_to = "mean_score"
  )
 
-write.csv(
- long_means,
- file = "/data/home/hdx044/files/BAFF/All_pathways_by_celltype_BAFF.csv",
- row.names = FALSE
-)
-
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(ComplexHeatmap)
-library(circlize)
+# Check the result
+print(head(long_means, 20))
 
 # Define UCell Cutoffs
 
@@ -320,270 +564,269 @@ pathways_meaningful <- pathway_max_scores %>%
 
 cat(sprintf("Pathways > 0.15: %d\n\n", length(pathways_meaningful)))
 
-# EXPANDED PATHWAY FILTERING
+#### UCell pathways heatmap ####
 
-# Define comprehensive pathway categories relevant to MASH and B cell biology
+ucell_mat <- GetAssayData(
+ liverBaffreceptorObj,
+ assay = "escape.UCell",
+ slot = "data"
+)
 
-pathway_categories <- list(
+ucell_df <- as.data.frame(t(ucell_mat))
+ucell_df$BAFFreceptorStatus <- liverBaffreceptorObj$BAFFreceptorStatus[rownames(ucell_df)]
+
+# Pathways exactly as you specified
+# Define BAFF/fibrosis-relevant pathways and categories ---
+
+pathway_groups <- list(
  
- # FIBROSIS-RELATED
- fibrosis = c(
-  "TGF", "TGFB", "PDGF", "WNT", "BMP", "VEGF",
-  "COLLAGEN", "ECM", "EXTRACELLULAR.MATRIX", "MATRIX",
-  "FIBRONECTIN", "EMT", "EPITHELIAL", "FIBROSIS", "FIBROTIC"
+ "NF-kB / Inflammatory Signaling" = c(
+  "REACTOME-NF-KB-IS-ACTIVATED-AND-SIGNALS-SURVIVAL",
+  "REACTOME-TNFR1-INDUCED-NFKAPPAB-SIGNALING-PATHWAY",
+  "REACTOME-REGULATION-OF-TNFR1-SIGNALING",
+  "REACTOME-TNFR1-MEDIATED-CERAMIDE-PRODUCTION",
+  "REACTOME-IRAK2-MEDIATED-ACTIVATION-OF-TAK1-COMPLEX",
+  "REACTOME-IRAK1-RECRUITS-IKK-COMPLEX",
+  "REACTOME-TAK1-ACTIVATES-NFKB-BY-PHOSPHORYLATION-AND-ACTIVATION-OF-IKKS-COMPLEX",
+  "REACTOME-IKBA-VARIANT-LEADS-TO-EDA-ID",
+  "REACTOME-IKK-COMPLEX-RECRUITMENT-MEDIATED-BY-RIP1",
+  "REACTOME-TICAM1-RIP1-MEDIATED-IKK-COMPLEX-RECRUITMENT",
+  "REACTOME-TICAM1-TRAF6-DEPENDENT-INDUCTION-OF-TAK1-COMPLEX",
+  "REACTOME-TRAF6-MEDIATED-INDUCTION-OF-TAK1-COMPLEX-WITHIN-TLR4-COMPLEX",
+  "REACTOME-P75NTR-SIGNALS-VIA-NF-KB",
+  "REACTOME-P75NTR-RECRUITS-SIGNALLING-COMPLEXES"
  ),
  
- # B CELL ACTIVATION & SIGNALING
- activation = c(
-  "B.CELL", "BCR", "B.LYMPHOCYTE",
-  "CD40", "BAFF", "TNFSF13", "APRIL",
-  "ACTIVATION", "ANTIGEN.RECEPTOR",
-  "NF.KAPPA.B", "NFKB", "PI3K", "AKT",
-  "MTOR", "JAK", "STAT"
+ "TGF-beta / EMT / Fibrosis" = c(
+  "REACTOME-TGF-BETA-RECEPTOR-SIGNALING-IN-EMT-EPITHELIAL-TO-MESENCHYMAL-TRANSITION",
+  "REACTOME-TGF-BETA-RECEPTOR-SIGNALING-ACTIVATES-SMADS",
+  "REACTOME-DOWNREGULATION-OF-TGF-BETA-RECEPTOR-SIGNALING",
+  "REACTOME-DOWNREGULATION-OF-SMAD2-3-SMAD4-TRANSCRIPTIONAL-ACTIVITY",
+  "REACTOME-SMAD2-SMAD3-SMAD4-HETEROTRIMER-REGULATES-TRANSCRIPTION"
  ),
  
- # PROLIFERATION & CELL CYCLE
- proliferation = c(
-  "PROLIFERATION", "CELL.CYCLE", "MITOSIS", "MITOTIC",
-  "G1.S", "G2.M", "CYCLIN", "CDK",
-  "DNA.REPLICATION", "S.PHASE", "M.PHASE",
-  "E2F", "RB1", "P53"
+ "Innate Immune / IRF / TLR Signaling" = c(
+  "REACTOME-TICAM1-DEPENDENT-ACTIVATION-OF-IRF3-IRF7",
+  "REACTOME-ACTIVATION-OF-IRF3-IRF7-MEDIATED-BY-TBK1-IKK-EPSILON",
+  "REACTOME-TRAF6-MEDIATED-IRF7-ACTIVATION-IN-TLR7-8-OR-9-SIGNALING",
+  "REACTOME-REGULATION-OF-INNATE-IMMUNE-RESPONSES-TO-CYTOSOLIC-DNA",
+  "REACTOME-NEGATIVE-REGULATORS-OF-DDX58-IFIH1-SIGNALING",
+  "REACTOME-REGULATION-OF-BACH1-ACTIVITY",
+  "REACTOME-CYTOPROTECTION-BY-HMOX1"
  ),
  
- # INFLAMMATION & CYTOKINES
- inflammation = c(
-  "INFLAMMATION", "INFLAMMATORY",
-  "TNF", "TNFSF", "IL.1", "IL.6", "IL.10",
-  "INTERFERON", "IFN", "CYTOKINE",
-  "CHEMOKINE", "CCL", "CXCL"
+ "MAPK / Stress Kinase Signaling" = c(
+  "REACTOME-JNK-C-JUN-KINASES-PHOSPHORYLATION-AND-ACTIVATION-MEDIATED-BY-ACTIVATED-HUMAN-TAK1",
+  "REACTOME-ACTIVATED-TAK1-MEDIATES-P38-MAPK-ACTIVATION",
+  "REACTOME-MAP3K8-TPL2-DEPENDENT-MAPK1-3-ACTIVATION",
+  "REACTOME-NEGATIVE-REGULATION-OF-MAPK-PATHWAY",
+  "REACTOME-ACTIVATION-OF-THE-AP-1-FAMILY-OF-TRANSCRIPTION-FACTORS"
  ),
  
- # IMMUNE RESPONSE
- immune = c(
-  "IMMUNE", "IMMUNOLOGICAL",
-  "COMPLEMENT", "C3", "C5",
-  "MHC", "ANTIGEN.PRESENTATION",
-  "COSTIMULATORY", "CD80", "CD86"
+ "IL-12 / JAK-STAT Signaling" = c(
+  "REACTOME-INTERLEUKIN-12-SIGNALING",
+  "REACTOME-INTERLEUKIN-12-FAMILY-SIGNALING",
+  "REACTOME-GENE-AND-PROTEIN-EXPRESSION-BY-JAK-STAT-SIGNALING-AFTER-INTERLEUKIN-12-STIMULATION"
  ),
  
- # APOPTOSIS & SURVIVAL
- survival = c(
-  "APOPTOSIS", "APOPTOTIC", "CELL.DEATH",
-  "SURVIVAL", "BCL", "CASPASE",
-  "INTRINSIC.APOPTOSIS", "EXTRINSIC.APOPTOSIS"
+ "Antigen Presentation / BCR" = c(
+  "REACTOME-ANTIGEN-PRESENTATION-FOLDING-ASSEMBLY-AND-PEPTIDE-LOADING-OF-CLASS-I-MHC",
+  "REACTOME-ANTIGEN-PROCESSING-CROSS-PRESENTATION",
+  "REACTOME-CROSS-PRESENTATION-OF-PARTICULATE-EXOGENOUS-ANTIGENS-PHAGOSOMES",
+  "REACTOME-NEF-MEDIATED-DOWNREGULATION-OF-MHC-CLASS-I-COMPLEX-CELL-SURFACE-EXPRESSION",
+  "REACTOME-PD-1-SIGNALING",
+  "REACTOME-DOWNSTREAM-SIGNALING-EVENTS-OF-B-CELL-RECEPTOR-BCR"
  ),
  
- # METABOLISM
- metabolism = c(
-  "METABOLISM", "METABOLIC", "GLYCOLYSIS",
-  "OXIDATIVE.PHOSPHORYLATION", "OXPHOS",
-  "FATTY.ACID", "LIPID", "GLUCOSE"
+ "Autophagy / Mitophagy / UPR" = c(
+  "REACTOME-CHAPERONE-MEDIATED-AUTOPHAGY",
+  "REACTOME-PINK1-PRKN-MEDIATED-MITOPHAGY",
+  "REACTOME-MITOPHAGY",
+  "REACTOME-PEXOPHAGY",
+  "REACTOME-AGGREPHAGY",
+  "REACTOME-LATE-ENDOSOMAL-MICROAUTOPHAGY",
+  "REACTOME-ATF6-ATF6-ALPHA-ACTIVATES-CHAPERONE-GENES",
+  "REACTOME-ATF6-ATF6-ALPHA-ACTIVATES-CHAPERONES",
+  "REACTOME-HSF1-ACTIVATION",
+  "REACTOME-HSF1-DEPENDENT-TRANSACTIVATION",
+  "REACTOME-CALNEXIN-CALRETICULIN-CYCLE",
+  "REACTOME-N-GLYCAN-TRIMMING-IN-THE-ER-AND-CALNEXIN-CALRETICULIN-CYCLE",
+  "REACTOME-ER-QUALITY-CONTROL-COMPARTMENT-ERQC"
  ),
  
- # PLASMA CELL DIFFERENTIATION
- plasma_cell = c(
-  "PLASMA.CELL", "ANTIBODY", "IMMUNOGLOBULIN",
-  "PRDM1", "BLIMP", "XBP1", "IRF4",
-  "SECRETION", "ER.STRESS", "UPR"
+ "Metabolism / Mitochondria" = c(
+  "REACTOME-RESPIRATORY-ELECTRON-TRANSPORT",
+  "REACTOME-RESPIRATORY-ELECTRON-TRANSPORT-ATP-SYNTHESIS-BY-CHEMIOSMOTIC-COUPLING-AND-HEAT-PRODUCTION-BY-UNCOUPLING-PROTEINS",
+  "REACTOME-FORMATION-OF-ATP-BY-CHEMIOSMOTIC-COUPLING",
+  "REACTOME-THE-CITRIC-ACID-TCA-CYCLE-AND-RESPIRATORY-ELECTRON-TRANSPORT",
+  "REACTOME-COMPLEX-I-BIOGENESIS",
+  "REACTOME-CRISTAE-FORMATION",
+  "REACTOME-GLYCOGEN-METABOLISM",
+  "REACTOME-GLYCOGEN-SYNTHESIS",
+  "REACTOME-GLYCOGEN-STORAGE-DISEASES",
+  "REACTOME-CELLULAR-RESPONSE-TO-STARVATION",
+  "REACTOME-METABOLISM-OF-AMINO-ACIDS-AND-DERIVATIVES",
+  "REACTOME-SELENOAMINO-ACID-METABOLISM"
+ ),
+ 
+ "Translation / RNA Processing" = c(
+  "REACTOME-EUKARYOTIC-TRANSLATION-ELONGATION",
+  "REACTOME-EUKARYOTIC-TRANSLATION-INITIATION",
+  "REACTOME-TRANSLATION",
+  "REACTOME-NONSENSE-MEDIATED-DECAY-NMD",
+  "REACTOME-METABOLISM-OF-RNA",
+  "REACTOME-RRNA-PROCESSING",
+  "REACTOME-AUF1-HNRNP-D0-BINDS-AND-DESTABILIZES-MRNA",
+  "REACTOME-REGULATION-OF-MRNA-STABILITY-BY-PROTEINS-THAT-BIND-AU-RICH-ELEMENTS",
+  "REACTOME-RESPONSE-OF-EIF2AK4-GCN2-TO-AMINO-ACID-DEFICIENCY",
+  "REACTOME-ACTIVATION-OF-THE-MRNA-UPON-BINDING-OF-THE-CAP-BINDING-COMPLEX-AND-EIFS-AND-SUBSEQUENT-BINDING-TO-43S",
+  "REACTOME-ATTENUATION-PHASE"
  )
 )
 
-# Create combined pattern for each category
-category_patterns <- lapply(pathway_categories, function(keywords) {
- paste(keywords, collapse = "|")
-})
+# Flatten to a named vector: pathway -> category
+pathway_category_map <- stack(pathway_groups)
+colnames(pathway_category_map) <- c("pathway", "category")
 
-# FILTER PATHWAYS BY CATEGORY
+# Sanity check
+cat("Total pathways mapped:", nrow(pathway_category_map), "\n")
+cat("Categories:\n")
+print(table(pathway_category_map$category))
 
-cat("\n========== PATHWAY FILTERING BY CATEGORY ==========\n\n")
+# Compute mean UCell score per BAFFreceptorStatus group
+# Get pathways that are both mapped AND present in ucell_df
+available_pathways <- intersect(pathway_category_map$pathway, colnames(ucell_df))
+cat("Pathways mapped and present in ucell_df:", length(available_pathways), "\n")
 
-pathway_results <- list()
+# Subset ucell_df to available pathways + metadata
+ucell_sub <- ucell_df[, c(available_pathways, "BAFFreceptorStatus")]
 
-for (cat_name in names(category_patterns)) {
- 
- pattern <- category_patterns[[cat_name]]
- 
- pathways_cat <- pathway_max_scores %>%
-  filter(
-   max_score > UCELL_MODERATE,  # Still use 0.15 cutoff
-   grepl(pattern, pathway, ignore.case = TRUE)
-  ) %>%
-  arrange(desc(max_score))
- 
- pathway_results[[cat_name]] <- pathways_cat
- 
- cat(sprintf("%s pathways (>0.15): %d\n", 
-             toupper(cat_name), nrow(pathways_cat)))
- 
- if (nrow(pathways_cat) > 0) {
-  cat("  Top 5:\n")
-  for (i in 1:min(5, nrow(pathways_cat))) {
-   cat(sprintf("    %.3f - %s\n", 
-               pathways_cat$max_score[i],
-               substr(pathways_cat$pathway[i], 1, 70)))
-  }
- }
- cat("\n")
-}
-
-# COMBINE ALL RELEVANT PATHWAYS
-
-# Combine all categories (removing duplicates)
-pathways_combined <- unique(c(
- pathway_results$fibrosis$pathway,
- pathway_results$activation$pathway,
- pathway_results$proliferation$pathway,
- pathway_results$inflammation$pathway,
- pathway_results$immune$pathway,
- pathway_results$survival$pathway,
- pathway_results$metabolism$pathway,
- pathway_results$plasma_cell$pathway
-))
-
-cat(sprintf("TOTAL UNIQUE PATHWAYS (all categories): %d\n\n", 
-            length(pathways_combined)))
-
-# ANNOTATE PATHWAYS WITH CATEGORIES
-
-pathway_annotations <- pathway_max_scores %>%
- filter(pathway %in% pathways_combined) %>%
- mutate(
-  category = case_when(
-   grepl(category_patterns$fibrosis, pathway, ignore.case = TRUE) ~ "Fibrosis",
-   grepl(category_patterns$activation, pathway, ignore.case = TRUE) ~ "B cell activation",
-   grepl(category_patterns$proliferation, pathway, ignore.case = TRUE) ~ "Proliferation",
-   grepl(category_patterns$inflammation, pathway, ignore.case = TRUE) ~ "Inflammation",
-   grepl(category_patterns$plasma_cell, pathway, ignore.case = TRUE) ~ "Plasma cell",
-   grepl(category_patterns$immune, pathway, ignore.case = TRUE) ~ "Immune response",
-   grepl(category_patterns$survival, pathway, ignore.case = TRUE) ~ "Survival/Apoptosis",
-   grepl(category_patterns$metabolism, pathway, ignore.case = TRUE) ~ "Metabolism",
-   TRUE ~ "Other"
-  )
- ) %>%
- arrange(category, desc(max_score))
-
-# CREATE COMPREHENSIVE HEATMAP
-
-heatmap_data_full <- pathway_cluster_means %>%
- select(cluster, all_of(pathways_combined)) %>%
+# Compute mean per group
+mean_mat <- ucell_sub %>%
+ group_by(BAFFreceptorStatus) %>%
+ summarise(across(all_of(available_pathways), mean, na.rm = TRUE)) %>%
+ column_to_rownames("BAFFreceptorStatus") %>%
+ t() %>%
  as.data.frame()
 
-rownames(heatmap_data_full) <- heatmap_data_full$cluster
-heatmap_matrix_full <- t(as.matrix(heatmap_data_full[, -1]))
+cat("Matrix dims (pathways x groups):", dim(mean_mat), "\n")
+print(head(mean_mat))
 
-# Create category annotation for heatmap
-pathway_category_anno <- pathway_annotations %>%
- select(pathway, category) %>%
- arrange(match(pathway, rownames(heatmap_matrix_full)))
+# Z-score + build row annotation + heatmap
+# Z-score across the 2 groups (per pathway)
+mean_mat_z <- t(scale(t(mean_mat)))
 
-library(dplyr)
-library(stringr)
-library(pheatmap)
-library(viridis)
+# Build row annotation from pathway_category_map
+row_anno_df <- pathway_category_map %>%
+ filter(pathway %in% rownames(mean_mat_z)) %>%
+ arrange(match(pathway, rownames(mean_mat_z))) %>%
+ column_to_rownames("pathway")
 
-# make sure matrix rownames match "pathway"
-pathway_category_anno <- pathway_annotations %>%
- select(pathway, category)
+# Reorder mean_mat_z rows to match annotation order
+mean_mat_z <- mean_mat_z[rownames(row_anno_df), ]
 
-categories_to_plot <- c(
- "Fibrosis",
- "B cell activation",
- "Proliferation",
- "Inflammation",
- "Plasma cell",
- "Immune response",
- "Survival/Apoptosis",
- "Metabolism"
+# Define category colours
+n_cats <- length(unique(row_anno_df$category))
+cat_colours <- c(RColorBrewer::brewer.pal(8, "Set2"), "#8B4513")
+category_cols <- setNames(cat_colours[1:n_cats], unique(row_anno_df$category))
+
+# Clean row names (strip REACTOME- prefix)
+rownames(mean_mat_z) <- gsub("^REACTOME-", "", rownames(mean_mat_z))
+row_anno_df_plot <- row_anno_df
+rownames(row_anno_df_plot) <- gsub("^REACTOME-", "", rownames(row_anno_df_plot))
+
+row_anno <- rowAnnotation(
+ Category = row_anno_df_plot$category,
+ col = list(Category = category_cols),
+ show_annotation_name = FALSE,
+ show_legend = TRUE
 )
 
-# Directory to save heatmaps
-outdir <- "/data/home/hdx044/plots/BAFF/category_heatmaps/"
-dir.create(outdir, showWarnings = FALSE)
-
-library(dplyr)
-library(ComplexHeatmap)
-library(circlize)
-library(viridis)
-library(grid)
-library(officer)
-library(rvg)
-
-outdir <- "/data/home/hdx044/plots/BAFF/category_heatmaps/"
-dir.create(outdir, showWarnings = FALSE)
-
-# Single PPT file path
-ppt_all <- file.path(outdir, "all_categories_heatmaps.pptx")
-doc <- read_pptx()  # <-- open once
-
-for (cat in categories_to_plot) {
- # Safe category label for messages only
- safe_cat <- gsub("[^A-Za-z0-9]+", "_", cat)
- 
- # Subset matrix for this category
- cat_paths <- pathway_category_anno %>%
-  filter(category == cat) %>%
-  pull(pathway)
- 
- sub_mat <- heatmap_matrix_full[
-  rownames(heatmap_matrix_full) %in% cat_paths, , drop = FALSE
- ]
- if (nrow(sub_mat) == 0) {
-  message("Skip empty category: ", cat)
-  next
+ht <- Heatmap(
+ mean_mat_z,
+ name = "Z-score",
+ column_title = "UCell Pathway Enrichment: HIGH vs LOW expressing BAFF receptors B cells",
+ column_title_gp = gpar(fontsize = 14, fontface = "bold"),
+ column_title_side = "top",
+ col = circlize::colorRamp2(c(-2, 0, 2), c("#2166AC", "white", "#B2182B")),
+ row_split = row_anno_df_plot$category,
+ cluster_row_slices = FALSE,
+ cluster_rows = FALSE,
+ cluster_columns = FALSE,
+ left_annotation = row_anno,      # colour bar on LEFT
+ show_row_names = TRUE,
+ row_names_side = "left",         # names on LEFT before colour bar
+ row_title = NULL,
+ show_column_names = TRUE,
+ column_names_side = "bottom",
+ row_names_gp = gpar(fontsize = 12),
+ row_names_max_width = unit(12, "cm"),
+ border = TRUE,
+ width = unit(3, "cm"),
+ row_gap = unit(2, "mm"),
+ border_gp = gpar(col = "grey60", lwd = 0.5),
+ cell_fun = function(j, i, x, y, width, height, fill) {
+  grid.rect(x, y, width, height,
+            gp = gpar(col = "grey85", fill = NA, lwd = 0.4))
  }
- 
- # Color function (fix breaks = colors)
- col_fun <- colorRamp2(
-  seq(min(sub_mat), max(sub_mat), length.out = 5),
-  viridis::viridis(5)
- )
- 
- # Build ComplexHeatmap
- p <- Heatmap(
-  sub_mat,
-  name = "UCell",
-  col = col_fun,
-  cluster_rows = TRUE,
-  cluster_columns = TRUE,
-  
-  # Keep full Reactome names; adjust font if needed
-  row_names_gp = gpar(fontsize = 6),
-  row_names_max_width = unit(9, "cm"),
-  
-  # Column labels
-  column_names_rot = 90,
-  column_names_gp = gpar(fontsize = 10),
-  
-  # Control block size (cell height/width equivalents)
-  height = unit(nrow(sub_mat) * 3.5, "mm"),
-  width  = unit(ncol(sub_mat) * 15,  "mm"),
-  
-  column_title = paste("Category:", cat)
- )
- 
- # ---- Add a slide for this category and put the heatmap on it
- doc <- add_slide(doc, layout = "Blank", master = "Office Theme")
- doc <- ph_with(
-  doc,
-  value = dml(code = { draw(p) }),
-  location = ph_location(left = 0.5, top = 0.5, width = 9, height = 5)
- )
- 
- message("Added to PPT (slide): ", safe_cat)
+)
+
+png("/data/home/hdx044/plots/BAFF/enrichPathwayUcellHIGH_vs_LOW_BAFFreceptor.png",
+    width = 22, height = 20, units = "in", res = 300)
+draw(ht,
+     merge_legend = TRUE,
+     padding = unit(c(2, 2, 2, 2), "mm"),
+     heatmap_legend_side = "right",
+     annotation_legend_side = "right")
+dev.off()
+
+#### Significant Ucell pathway ####
+# Stats: Wilcoxon per pathway, BH correction
+
+pathway_cols <- available_pathways
+
+stat_results <- data.frame(
+ pathway = pathway_cols,
+ p_value = NA_real_,
+ p_adj   = NA_real_
+)
+
+for (i in seq_along(pathway_cols)) {
+ pw <- pathway_cols[i]
+ high <- ucell_df[ucell_df$BAFFreceptorStatus == "High", pw]
+ low  <- ucell_df[ucell_df$BAFFreceptorStatus == "Low",  pw]
+ stat_results$p_value[i] <- wilcox.test(high, low, exact = FALSE)$p.value
 }
 
-# Save ONE PPT containing all slides
-print(doc, target = ppt_all)
-message("Saved single PPT: ", ppt_all)
+stat_results$p_adj <- p.adjust(stat_results$p_value, method = "BH")
 
+# Significance stars
+stat_results$stars <- ifelse(stat_results$p_adj < 0.001, "***",
+                             ifelse(stat_results$p_adj < 0.01,  "**",
+                                    ifelse(stat_results$p_adj < 0.05,  "*", "")))
 
-write.csv(
- heatmap_matrix_full,
- file = "/data/home/hdx044/files/BAFF/pathway_cluster_heatmap_metadata.csv",
- row.names = TRUE
+# Sanity check
+cat("Significant pathways (FDR < 0.05):", sum(stat_results$p_adj < 0.05, na.rm = TRUE), "\n")
+print(stat_results[stat_results$stars != "", ])
+
+# Add effect size filter: only star if mean difference > threshold
+mean_diff <- rowMeans(mean_mat[, "High", drop=FALSE]) - rowMeans(mean_mat[, "Low", drop=FALSE])
+
+stat_results$mean_diff <- mean_diff[stat_results$pathway]
+stat_results$stars_filtered <- ifelse(
+ stat_results$p_adj < 0.05 & abs(stat_results$mean_diff) > 0.05, 
+ stat_results$stars, 
+ ""
 )
 
-#### Create cellchat obj ####
+cat("Pathways with FDR<0.05 AND |mean diff|>0.05:", 
+    sum(stat_results$stars_filtered != ""), "\n")
+
+# Check distribution of mean differences
+summary(abs(stat_results$mean_diff))
+
+#### Create cellchat obj for baff receptor ####
+
 # Split Seurat Object Based on BAFF Receptor Expression Levels
 # Creates two objects: HIGH receptor (>0.25) vs LOW receptor (≤0.25) in specific clusters
 # All other clusters remain unchanged in both objects

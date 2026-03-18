@@ -235,10 +235,102 @@ table(combined.BCR.liver.baff$BAFFreceptorStatus)
 nrow(combined.BCR.liver.baff)
 
 
+# Keep only cells with BAFF status (you already did something like this)
+combined.BCR.liver.baff <- combined.BCR.liver %>%
+ filter(!is.na(BAFFreceptorStatus))
 
+# Re-split into a list of data frames, one per sample (required by scRepertoire)
+bcr_list_baff <- split(combined.BCR.liver.baff, combined.BCR.liver.baff$sample_short)
 
+# (Optional but recommended) Drop any empty list elements
+bcr_list_baff <- bcr_list_baff[sapply(bcr_list_baff, nrow) > 0]
 
+# Now run clonalQuant — group.by must be a column present in every element
+clonalQuant(
+ bcr_list_baff,
+ cloneCall = "gene",                 # or "strict", "aa", "nt"
+ group.by  = "BAFFreceptorStatus",   # this column exists in your merged BCR
+ scale     = TRUE                    # set FALSE if you want raw counts
+)
 
+library(dplyr)
+library(ggplot2)
+library(forcats)
 
+# 0) Keep only rows with BAFF status
+bcr <- combined.BCR.liver %>%
+ filter(!is.na(BAFFreceptorStatus))
+
+# 1) Extract IGHV gene
+# Your earlier preview showed IGH values like "IGHV4-30-4..IGHJ1.IGHA1"
+# -> keep the part before the first dot: "IGHV4-30-4"
+bcr <- bcr %>%
+ mutate(IGHV = if ("IGH" %in% colnames(.))
+  sub("\\..*$", "", IGH) else NA_character_) %>%
+ filter(!is.na(IGHV), IGHV != "")
+
+# 2) RAW COUNTS per BAFF x IGHV
+cnt <- bcr %>%
+ count(BAFFreceptorStatus, IGHV, name = "n")
+
+# Optional: order IGHV by total counts for a cleaner x-axis
+cnt <- cnt %>%
+ group_by(IGHV) %>% mutate(total = sum(n)) %>% ungroup() %>%
+ mutate(IGHV = fct_reorder(IGHV, total, .desc = TRUE))
+
+# 3) PROPORTIONS within each BAFF group
+prop <- cnt %>%
+ group_by(BAFFreceptorStatus) %>%
+ mutate(prop = n / sum(n)) %>%
+ ungroup()
+
+# 4a) Plot PROPORTIONS
+ggplot(prop, aes(x = IGHV, y = prop, fill = BAFFreceptorStatus)) +
+ geom_col(position = "dodge") +
+ scale_y_continuous(labels = scales::percent_format()) +
+ labs(title = "IGH V-gene usage by BAFF receptor status (proportion)",
+      x = "IGHV",
+      y = "Proportion of BCRs") +
+ theme_classic() +
+ theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# 4b) Plot RAW COUNTS (if you also want counts)
+ggplot(cnt, aes(x = IGHV, y = n, fill = BAFFreceptorStatus)) +
+ geom_col(position = "dodge") +
+ labs(title = "IGH V-gene usage by BAFF receptor status (counts)",
+      x = "IGHV",
+      y = "Count") +
+ theme_classic() +
+ theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# IGHV1-69D, IGHV4-30-4, IGHV4-59 MORE USED IN LOW
+
+# Light-chain V-gene usage (if your light gene column is e.g., 'IGLC' or 'VL_gene')
+bcr_light <- combined.BCR.liver %>%
+ filter(!is.na(BAFFreceptorStatus)) %>%
+ mutate(LightV = if ("IGLC" %in% colnames(.))
+  sub("\\..*$", "", IGLC) else NA_character_) %>%
+ filter(!is.na(LightV), LightV != "")
+
+cnt_light <- bcr_light %>%
+ count(BAFFreceptorStatus, LightV, name = "n") %>%
+ group_by(LightV) %>% mutate(total = sum(n)) %>% ungroup() %>%
+ mutate(LightV = fct_reorder(LightV, total, .desc = TRUE))
+
+prop_light <- cnt_light %>%
+ group_by(BAFFreceptorStatus) %>%
+ mutate(prop = n / sum(n)) %>%
+ ungroup()
+
+ggplot(prop_light, aes(x = LightV, y = prop, fill = BAFFreceptorStatus)) +
+ geom_col(position = "dodge") +
+ scale_y_continuous(labels = scales::percent_format()) +
+ labs(title = "IG light-chain V-gene usage by BAFF receptor status (proportion)",
+      x = "IGKV/IGLV",
+      y = "Proportion of BCRs") +
+ theme_classic() +
+ theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# IGKV3-15, IGLV2-23, IGKV3-11 MORE USED IN LOW
 
 
