@@ -381,62 +381,67 @@ DE_results <- DE_results %>%
 
 # Summary
 cat("\nDifferential Expression Summary:\n")
-print(table(DE_results$direction))
 
-# Select top 10 up and top 10 down among significant genes
-top_up <- DE_results %>%
- dplyr::filter(p_val_adj < 0.05, avg_log2FC > 5) %>%
- dplyr::arrange(p_val_adj) %>%
- dplyr::slice_head(n = 15)
+# Genes to label on volcano plot
 
-top_down <- DE_results %>%
- dplyr::filter(p_val_adj < 0.05, avg_log2FC < -0.5) %>%
- dplyr::arrange(p_val_adj) %>%
- dplyr::slice_head(n = 10)
-
-label_genes <- dplyr::bind_rows(top_up, top_down) %>%
- dplyr::distinct(gene, .keep_all = TRUE)
-
-cat(sprintf("\nLabeling %d genes (top 10 up + top 10 down)\n", nrow(label_genes)))
-
-# Step 4: Create Volcano Plot
-
-# Define colors
-colors <- c(
- "Upregulated in HIGH" = "#E41A1C",
- "Upregulated in LOW" = "#377EB8",
- "Not Significant" = "grey70"
+label_gene_names <- c(
+ # BAFF receptors (confirmation of stratification)
+ "TNFRSF13B",  # TACI - BAFF receptor, confirms HIGH stratification
+ "TNFRSF17",   # BCMA - BAFF receptor, confirms HIGH stratification
+ "TNFRSF13C",  # BAFF-R - BAFF receptor, confirms HIGH stratification
+ 
+ # Fibrosis-related - Upregulated in HIGH
+ "BMP6",       # Iron metabolism + HSC activation in MASH
+ "TGFBR3L",    # TGF-beta receptor signalling
+ "WNT5B",      # Wnt signalling + fibrosis
+ "IGF1",       # Hepatocyte survival + fibrosis
+ "CTHRC1",     # ECM remodelling + HSC activation
+ "SDC1",       # Plasma cell marker + fibrosis niche (CD138)
+ "COL4A3",     # Collagen ECM component
+ 
+ # Fibrosis-related - Upregulated in LOW
+ "TGFB1",      # Canonical fibrosis driver
+ "TIMP3",      # ECM regulation + TGF-beta pathway
+ "CXCL12"      # Fibrosis niche + B cell homing
 )
 
-# Create plot
+label_genes <- DE_results %>%
+ filter(gene %in% label_gene_names)
+
+print(table(DE_results$direction))
+
+# Step 4: Create Volcano Plot
+colors <- c(
+ "Upregulated in HIGH" = "#E41A1C",
+ "Upregulated in LOW"  = "#377EB8",
+ "Not Significant"     = "grey70"
+)
+
 p_volcano <- ggplot(DE_results, aes(x = avg_log2FC, y = neg_log10_padj)) +
  
- # Points
  geom_point(aes(color = direction), alpha = 0.6, size = 1.5) +
  
- # Threshold lines
- geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", 
+ geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed",
             color = "black", size = 0.5) +
- geom_hline(yintercept = -log10(0.05), linetype = "dashed", 
+ geom_hline(yintercept = -log10(0.05), linetype = "dashed",
             color = "black", size = 0.5) +
  
- # Labels for key genes
  geom_text_repel(
   data = label_genes,
-  aes(label = gene),
+  aes(label = gene, color = direction),
   size = 3,
   max.overlaps = 20,
   box.padding = 0.5,
   point.padding = 0.3,
   segment.color = "grey50",
   segment.size = 0.3,
-  min.segment.length = 0
+  min.segment.length = 0,
+  show.legend = FALSE,
+  bg.color = "white",      # white box behind text
+  bg.r = 0.15              # border radius of box
  ) +
- 
- # Colors
  scale_color_manual(values = colors) +
  
- # Theme
  theme_classic(base_size = 12) +
  theme(
   legend.position = "top",
@@ -446,19 +451,16 @@ p_volcano <- ggplot(DE_results, aes(x = avg_log2FC, y = neg_log10_padj)) +
   panel.grid.major = element_line(color = "grey90", size = 0.2)
  ) +
  
- # Labels
  labs(
-  title = "Differential gene: HIGH vs LOW expressing BAFF receptors B cells",
-  x = "log2 Fold Change (HIGH vs LOW)",
+  title = "Differential gene: High vs Low expressing BAFF receptors B cells",
+  x = "log2 Fold Change (High vs Low)",
   y = "-log10(Adjusted P-value)",
   caption = "Dashed lines: |logFC| > 0.5, adjusted p < 0.05"
  ) +
  
- # Axis limits
  xlim(c(min(DE_results$avg_log2FC) - 0.5, max(DE_results$avg_log2FC) + 0.5)) +
  ylim(c(0, max(DE_results$neg_log10_padj) * 1.1))
 
-# Display plot
 print(p_volcano)
 
 # Save plot
@@ -784,7 +786,6 @@ dev.off()
 # Stats: Wilcoxon per pathway, BH correction
 
 pathway_cols <- available_pathways
-
 stat_results <- data.frame(
  pathway = pathway_cols,
  p_value = NA_real_,
@@ -818,12 +819,73 @@ stat_results$stars_filtered <- ifelse(
  stat_results$stars, 
  ""
 )
-
 cat("Pathways with FDR<0.05 AND |mean diff|>0.05:", 
     sum(stat_results$stars_filtered != ""), "\n")
 
 # Check distribution of mean differences
 summary(abs(stat_results$mean_diff))
+
+stat_results[stat_results$stars_filtered != "", c("pathway", "mean_diff", "p_adj", "stars_filtered")]
+
+#### Highlight pathways with coloured border in cell_fun ####
+highlight_paths <- gsub("^REACTOME-", "", c(
+ "REACTOME-PEXOPHAGY",
+ "REACTOME-ATF6-ATF6-ALPHA-ACTIVATES-CHAPERONE-GENES",
+ "REACTOME-ATF6-ATF6-ALPHA-ACTIVATES-CHAPERONES",
+ "REACTOME-FORMATION-OF-ATP-BY-CHEMIOSMOTIC-COUPLING",
+ "REACTOME-SELENOAMINO-ACID-METABOLISM",
+ "REACTOME-EUKARYOTIC-TRANSLATION-ELONGATION",
+ "REACTOME-EUKARYOTIC-TRANSLATION-INITIATION",
+ "REACTOME-NONSENSE-MEDIATED-DECAY-NMD",
+ "REACTOME-RESPONSE-OF-EIF2AK4-GCN2-TO-AMINO-ACID-DEFICIENCY",
+ "REACTOME-ACTIVATION-OF-THE-MRNA-UPON-BINDING-OF-THE-CAP-BINDING-COMPLEX-AND-EIFS-AND-SUBSEQUENT-BINDING-TO-43S"
+))
+
+highlight_rows <- which(rownames(mean_mat_z) %in% highlight_paths)
+
+ht <- Heatmap(
+ mean_mat_z,
+ name = "Z-score",
+ col = circlize::colorRamp2(c(-2, 0, 2), c("#2166AC", "white", "#B2182B")),
+ row_split = row_anno_df_plot$category,
+ cluster_row_slices = FALSE,
+ cluster_rows = FALSE,
+ cluster_columns = FALSE,
+ left_annotation = row_anno,
+ show_row_names = TRUE,
+ row_names_side = "left",
+ row_title = NULL,
+ show_column_names = TRUE,
+ column_names_side = "bottom",
+ row_names_gp = gpar(fontsize = 12),
+ row_names_max_width = unit(12, "cm"),
+ border = TRUE,
+ width = unit(3, "cm"),
+ row_gap = unit(2, "mm"),
+ border_gp = gpar(col = "grey60", lwd = 0.5),
+ cell_fun = function(j, i, x, y, width, height, fill) {
+  grid.rect(x, y, width, height,
+            gp = gpar(col = "grey85", fill = NA, lwd = 0.4))
+  if (i %in% highlight_rows) {
+   grid.rect(x, y, width, height,
+             gp = gpar(col = "blue", fill = NA, lwd = 2))
+  }
+ }
+)
+
+png("/data/home/hdx044/plots/BAFF/enrichPathwayUcellHIGH_vs_LOW_BAFFreceptor.png",
+    width = 22, height = 20, units = "in", res = 300)
+draw(ht,
+     merge_legend = TRUE,
+     padding = unit(c(15, 2, 2, 2), "mm"),
+     heatmap_legend_side = "right",
+     annotation_legend_side = "right")
+grid.text("UCell Pathway Enrichment: BAFF-Receptor High vs Low B cells",
+          x = unit(2, "mm"), y = unit(1, "npc") - unit(5, "mm"),
+          just = "left",
+          gp = gpar(fontsize = 14, fontface = "bold"))
+dev.off()
+
 
 #### Create cellchat obj for baff receptor ####
 
