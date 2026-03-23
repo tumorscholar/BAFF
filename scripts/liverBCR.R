@@ -207,7 +207,7 @@ prop <- cnt %>%
   mutate(prop = n / sum(n)) %>%
   ungroup()
 
-#### IGH-V GENE PLOT ####
+#### IGH-V gene plot ####
 
 ggp <- ggplot(prop, aes(x = IGHV, y = prop, fill = BAFFreceptorStatus)) +
   geom_col(position = "dodge") +
@@ -257,7 +257,7 @@ ggsave(
  dpi = 300
 )
 
-#### IGKV IGLV GENE PLOT ####
+#### IGKV IGLV gene plot ####
 
 bcr_light <- combined.BCR.liver %>%
   filter(!is.na(BAFFreceptorStatus)) %>%
@@ -534,26 +534,245 @@ ggsave(file.path(plot_dir, "effectorByCloneSize_BAFFstatus.png"),
        plot = p_effector, width = 10, height = 10, units = "in", dpi = 300)
 
 
+#### FNA BCR ####
+
+setwd('/data/home/hdx044/files/screpertoire/demux_contig/BCR')
+
+#Read TCR contig files
+
+s3 = read.csv("GC-WL-10738-LIVER_LIVER_BCR_contig.csv")          # 10738 LIVER baseline
+s4 = read.csv("GC-WL-11570-LIVER_BCR_contig.csv")                # 10738 LIVER followup
+
+s6 = read.csv("GC-WL-10291-1-LIVER_BCR_contig.csv")              # 10291-1 LIVER baseline
+s7 = read.csv("GC-WL-11303-LIVER_BCR_contig.csv")                # 10291-1 LIVER followup
+
+s10 = read.csv("GC-WL-11040-LIVER_LIVER_BCR_contig.csv")         # 11040 LIVER baseline
+s11 = read.csv("GC-WL-11816-LIVER_BCR_contig.csv")               # 11040 LIVER followup
+
+s14 = read.csv("GC-WL-11183-LIVER_LIVER_BCR_contig.csv")         # 11183 LIVER baseline
+s15 = read.csv("GC-WL-11937-LIVER_BCR_contig.csv")               # 11183 LIVER followup
 
 
+# List of TCR data 
+contig_list = list(s3,s4,s6,s7,s10,s11,s14,s15)
+
+#Correct sample names (aligned with your real metadata)
+sample_names <- c(
+ "Baseline-10738-LIVER",
+ "Followup-10738-LIVER",
+ 
+ "Baseline-10291-1-LIVER",
+ "Followup-10291-1-LIVER",
+ 
+ "Baseline-11040-LIVER", 
+ "Followup-11040-LIVER",
+ 
+ "Baseline-11183-LIVER", 
+ "Followup-11183-LIVER"
+)
+
+# Combine
+combined.BCR <- combineBCR(
+ contig_list,
+ samples = sample_names,
+ removeNA = FALSE,
+ removeMulti = FALSE,
+ filterMulti = FALSE
+)
+
+head(combined.BCR[[1]])
+
+#### Clonal expansion analysis ####
+# BCR Baseline vs Followup Analysis 
+
+# Total B cells
+total_bcells <- nrow(bind_rows(combined.BCR))
+cat("Total number of B cells:", total_bcells, "\n")
+#Total number of B cells: 1242
+
+# Combine all samples
+all_bcells <- dplyr::bind_rows(combined.BCR, .id = "Sample")
+
+# Unique clonotypes
+n_unique_clonotypes <- length(unique(all_bcells$CTaa))
+cat("Number of unique clonotypes:", n_unique_clonotypes, "\n")
+# Number of unique clonotypes: 867 
+
+# Expanded vs singleton
+clone_counts <- all_bcells %>%
+ group_by(CTaa) %>%
+ summarise(n_cells = n(), .groups = "drop")
+
+expanded_clones  <- clone_counts %>% filter(n_cells > 1)
+singleton_clones <- clone_counts %>% filter(n_cells == 1)
+
+n_expanded_cells  <- sum(expanded_clones$n_cells)
+n_singleton_cells <- sum(singleton_clones$n_cells)
+
+cat("Expanded B cells:", n_expanded_cells, "\n")
+# Expanded B cells: 419 
+
+cat("Singleton B cells:", n_singleton_cells, "\n")
+# Singleton B cells: 823
+
+cat("Overall expansion percentage:", 
+    round((n_expanded_cells / total_bcells) * 100, 2), "%\n")
+# Overall expansion percentage: 33.74 %
+
+# Add Patient and Timepoint metadata
+for (i in seq_along(combined.BCR)) {
+ sample_name <- names(combined.BCR)[i]
+ 
+ if (grepl("10738", sample_name)) {
+  combined.BCR[[i]]$Patient <- "10738"
+ } else if (grepl("10291", sample_name)) {
+  combined.BCR[[i]]$Patient <- "10291-1"
+ } else if (grepl("11040", sample_name)) {
+  combined.BCR[[i]]$Patient <- "11040"
+ } else if (grepl("11183", sample_name)) {
+  combined.BCR[[i]]$Patient <- "11183"
+ }
+ 
+ combined.BCR[[i]]$Timepoint <- ifelse(grepl("Baseline", sample_name),
+                                       "Baseline", "Followup")
+}
+
+# Diversity analysis
+div_shannon <- clonalDiversity(combined.BCR, cloneCall = "gene",
+                               x.axis = "sample",
+                               metric = "shannon", exportTable = TRUE)
+
+div_inv_simpson <- clonalDiversity(combined.BCR, cloneCall = "gene",
+                                   x.axis = "sample",
+                                   metric = "inv.simpson", exportTable = TRUE)
+
+prepare_div_data <- function(div_data, metric_name) {
+ div_data$Patient <- ifelse(grepl("10738", div_data$sample), "10738",
+                            ifelse(grepl("10291", div_data$sample), "10291-1",
+                                   ifelse(grepl("11040", div_data$sample), "11040", "11183")))
+ div_data$Timepoint <- ifelse(grepl("Baseline", div_data$sample),
+                              "Baseline", "Followup")
+ div_data$Patient   <- factor(div_data$Patient,
+                              levels = c("10738", "10291-1", "11040", "11183"))
+ div_data$Timepoint <- factor(div_data$Timepoint,
+                              levels = c("Baseline", "Followup"))
+ div_data$Metric    <- metric_name
+ return(div_data)
+}
+
+shannon_data     <- prepare_div_data(div_shannon,     "Shannon")
+inv_simpson_data <- prepare_div_data(div_inv_simpson, "Inverse Simpson")
+
+timepoint_colors <- c("Baseline" = "#440154FF", "Followup" = "#FDE725FF")
+
+p_shannon <- ggplot(shannon_data,
+                    aes(x = Patient, y = value,
+                        fill = Timepoint, color = Timepoint)) +
+ geom_boxplot(alpha = 0.3, outlier.shape = NA) +
+ geom_point(position = position_dodge(width = 0.75), size = 3) +
+ geom_line(aes(group = Patient),
+           position = position_dodge(width = 0.75),
+           linetype = "dashed", alpha = 0.4, color = "black") +
+ scale_fill_manual(values  = timepoint_colors) +
+ scale_color_manual(values = timepoint_colors) +
+ theme_classic() +
+ theme(axis.text.x    = element_text(size = 10, face = "bold"),
+       legend.position = "none") +
+ labs(title = "Shannon Index", x = "Patient", y = "Shannon")
+
+p_inv_simpson <- ggplot(inv_simpson_data,
+                        aes(x = Patient, y = value,
+                            fill = Timepoint, color = Timepoint)) +
+ geom_boxplot(alpha = 0.3, outlier.shape = NA) +
+ geom_point(position = position_dodge(width = 0.75), size = 3) +
+ geom_line(aes(group = Patient),
+           position = position_dodge(width = 0.75),
+           linetype = "dashed", alpha = 0.4, color = "black") +
+ scale_fill_manual(values  = timepoint_colors) +
+ scale_color_manual(values = timepoint_colors) +
+ theme_classic() +
+ theme(axis.text.x     = element_text(size = 10, face = "bold"),
+       legend.position = "bottom") +
+ labs(title = "Inverse Simpson Index",
+      x = "Patient", y = "Inv. Simpson",
+      fill = "Timepoint", color = "Timepoint")
+
+combined_plot <- (p_shannon | p_inv_simpson) +
+ plot_annotation(
+  title = "BCR Diversity Metrics - LIVER Baseline vs Followup",
+  theme = theme(plot.title = element_text(face = "bold",
+                                          size = 16, hjust = 0.5))
+ )
+
+print(combined_plot)
+
+ggsave("/data/home/hdx044/plots/screpertoire/liver/FNA/BCR/BCR_Diversity_liver_BaselineFollowup.png",
+       combined_plot, width = 10, height = 5, dpi = 300)
 
 
+# Top 100 clone dominance
+top_clone_analysis <- data.frame(
+ Sample     = character(),
+ Timepoint  = character(),
+ Patient    = character(),
+ Top100_Percent = numeric(),
+ stringsAsFactors = FALSE
+)
 
+for (i in seq_along(combined.BCR)) {
+ sample_data <- combined.BCR[[i]]
+ sample_name <- names(combined.BCR)[i]
+ 
+ clone_freq        <- table(sample_data$CTstrict)
+ clone_freq_sorted <- sort(clone_freq, decreasing = TRUE)
+ 
+ total_cells <- sum(clone_freq)
+ top100 <- (sum(clone_freq_sorted[1:min(100, length(clone_freq_sorted))]) /
+             total_cells) * 100
+ 
+ timepoint <- ifelse(grepl("Baseline", sample_name), "Baseline", "Followup")
+ patient   <- gsub("(Baseline-|Followup-)(.+)(-LIVER)", "\\2", sample_name)
+ 
+ top_clone_analysis <- rbind(top_clone_analysis, data.frame(
+  Sample        = sample_name,
+  Timepoint     = timepoint,
+  Patient       = patient,
+  Top100_Percent = round(top100, 2)
+ ))
+}
 
+cat("\n=== TOP 100 CLONE FREQUENCY BY SAMPLE ===\n")
+print(top_clone_analysis)
 
+# Summary
+top100_comparison <- top_clone_analysis %>%
+ group_by(Timepoint) %>%
+ summarise(
+  Mean_Top100 = round(mean(Top100_Percent), 2),
+  SD_Top100   = round(sd(Top100_Percent), 2),
+  n_samples   = n(),
+  .groups     = "drop"
+ )
+cat("\n=== TOP 100 COMPARISON: Baseline vs Followup ===\n")
+print(top100_comparison)
 
+# Change per donor
+top100_change <- top_clone_analysis %>%
+ select(Patient, Timepoint, Top100_Percent) %>%
+ pivot_wider(names_from = Timepoint, values_from = Top100_Percent) %>%
+ mutate(
+  Change         = Followup - Baseline,
+  Percent_Change = round((Followup - Baseline) / Baseline * 100, 1),
+  Direction      = case_when(
+   Change < -2 ~ "Improved ↓",
+   Change > 2  ~ "Worsened ↑",
+   TRUE        ~ "Stable"
+  )
+ ) %>%
+ filter(!is.na(Baseline) & !is.na(Followup))
 
-
-
-
-
-
-
-
-
-
-
-
+cat("\n=== TOP 100 CHANGE BY DONOR ===\n")
+print(top100_change)
 
 
 

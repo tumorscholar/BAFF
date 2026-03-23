@@ -828,6 +828,7 @@ summary(abs(stat_results$mean_diff))
 stat_results[stat_results$stars_filtered != "", c("pathway", "mean_diff", "p_adj", "stars_filtered")]
 
 #### Highlight pathways with coloured border in cell_fun ####
+
 highlight_paths <- gsub("^REACTOME-", "", c(
  "REACTOME-PEXOPHAGY",
  "REACTOME-ATF6-ATF6-ALPHA-ACTIVATES-CHAPERONE-GENES",
@@ -1090,3 +1091,55 @@ saveRDS(seurat_low_receptor, file = low_file)
 comp_file <- file.path('/data/Blizard-AlazawiLab/rk/cellchat/BAFF', "cluster_composition.csv")
 write.csv(comp_df, comp_file, row.names = FALSE)
 cat(paste0("Saved composition table to: ", comp_file, "\n"))
+
+
+#### Load FNA data ####
+SeuObj <- readRDS("/data/Blizard-AlazawiLab/rk/seurat/SeuObjFNA_LIVER_processed.rds")
+
+# BAFF and its receptor genes (human gene names)
+baff_receptors <- c("TNFSF13B", "TNFRSF13C", "TNFRSF13B", "TNFRSF17")  # BAFF, BAFFR, TACI, BCMA
+
+DotPlot2(SeuObj, features = baff_receptors, split.by = "seurat_clusters")
+
+fnaBAFF <- subset(SeuObj, subset = seurat_clusters %in% c("6", "9", "12", "21"))
+
+fnaBAFF$PatientID <- sub(".* ", "", fnaBAFF$VisitLabel)
+table(fnaBAFF$PatientID)
+
+# Get all unique Visit Labels
+visits <- unique(fnaBAFF$VisitLabel)
+
+# Extract patient IDs
+patient_ids <- sub(".* ", "", visits)
+
+# Extract visit type (baseline / followup)
+visit_type <- ifelse(grepl("^baseline", visits), "baseline", "followup")
+
+df <- data.frame(
+ VisitLabel = visits,
+ PatientID = patient_ids,
+ VisitType = visit_type,
+ stringsAsFactors = FALSE
+)
+
+# Order: baseline BEFORE followup, within each patient
+df <- df[order(df$PatientID, df$VisitType), ]
+
+# Apply ordered factor to your object
+fnaBAFF$VisitLabel <- factor(fnaBAFF$VisitLabel, levels = df$VisitLabel)
+levels(fnaBAFF$VisitLabel)
+
+
+ggp <- DotPlot2(
+ fnaBAFF,
+ features = baff_receptors,
+ group.by = "VisitLabel"
+)
+
+ggp
+
+ggsave("/data/home/hdx044/plots/screpertoire/liver/FNA/BCR/FNAdiversityBCR.png",
+       ggp, width = 5, height = 5, dpi = 300)
+
+
+

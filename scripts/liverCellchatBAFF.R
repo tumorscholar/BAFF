@@ -7,6 +7,8 @@ library(ComplexHeatmap)
 library(CellChat)
 library(future)
 library(patchwork)
+library(officer)
+library(rvg)
 options(stringsAsFactors = FALSE)
 options(future.globals.maxSize = 4000 * 1024^2)
 future::plan("multisession", workers = 1)
@@ -200,7 +202,7 @@ ggsave(
  units = "in"
 )
 
-# Identify dysfunctional signaling by using differential expression analysis
+#### Identify dysfunctional signaling by using differential expression analysis ####
 
 # define a positive dataset, i.e., the dataset with positive fold change against the other dataset
 pos.dataset = "BAFFreceptorHigh"
@@ -224,30 +226,235 @@ net.down <- subsetCommunication(cellchat, net = net, datasets = "BAFFreceptorHig
 
 write.csv(net.down, '/data/home/hdx044/files/cellchat/BAFF/net_down_baff_receptor_high.csv')
 
-# Visualize the identified up-regulated and down-regulated signaling ligand-receptor pairs
-pairLR.use.up = net.up[, "interaction_name", drop = F]
+#### Visualize the identified up-regulated and down-regulated signaling ligand-receptor pairs ####
 
-# Comparing communications on a merged object
-gg1 <- netVisual_bubble(cellchat, sources.use = c(9), targets.use = c(1:24),  comparison = c(1, 2), max.dataset = 1, title.name = "Increased signalling", angle.x = 90, remove.isolate = T, dot.size.min = 4,
-                        dot.size.max = 5,
-                        font.size = 16,
-                        font.size.title = 14,
-                        color.text = c("maroon", "mistyrose"))
-# Increase legend font size
-gg1 <- gg1 + theme(
- legend.title = element_text(size = 16),   # title font
- legend.text  = element_text(size = 14),   # text font
- legend.key.size = unit(1.5, "lines")      # enlarge legend symbols
+# Check pval distribution
+cat("pval summary:\n")
+print(summary(net.up$pval))
+
+cat("\nHow many interactions with pval = 0:\n")
+print(sum(net.up$pval == 0))
+
+cat("\nTotal interactions:\n")
+print(nrow(net.up))
+
+cat("\npval = 0 percentage:\n")
+print(sum(net.up$pval == 0) / nrow(net.up) * 100)
+
+# Check if any non-zero pvals exist
+cat("\nNon-zero pvals:\n")
+print(net.up[net.up$pval > 0, c("source", "target", "interaction_name_2", "pathway_name", "prob", "pval")])
+
+# Check fibroblast-specific interactions without prob threshold
+cat("All interactions targeting Fibroblasts (C13):\n")
+print(net.up[as.character(net.up$target) == "C13" & 
+              as.character(net.up$source) %in% sources_of_interest,
+             c("source", "target", "interaction_name_2", "pathway_name", "prob", "pval")])
+
+
+
+# Cluster to cell type mapping
+cluster_to_type <- c(
+ "C0"  = "CD8 Effector Memory",
+ "C1"  = "Naïve-Activated T cells",
+ "C2"  = "CD56 dim NK cells",
+ "C3"  = "CD14 Monocytes",
+ "C4"  = "CD8 Cytotoxic T cells",
+ "C5"  = "Macrophage",
+ "C6"  = "Blood vessels",
+ "C7"  = "CD4 T cells",
+ "C8"  = "Naïve B cells",
+ "C9"  = "ACKR1 Endothelial cells",
+ "C10" = "Myeloid Dendritic cells",
+ "C11" = "CD16 Monocytes",
+ "C12" = "CD56 high NK cells",
+ "C13" = "Fibroblasts",
+ "C14" = "Plasmacytoid Dendritic cells",
+ "C15" = "Mast cells",
+ "C16" = "TAGLN Endothelial cells",
+ "C17" = "Erythroid cells",
+ "C18" = "Liver Ductal cells",
+ "C19" = "Plasma cells_1",
+ "C20" = "Hepatocytes",
+ "C21" = "CD4 Proliferating T cells",
+ "C22" = "CD4 Dendritic cells",
+ "C23" = "TREM2 Dendritic cells",
+ "C24" = "Mesothelial cells",
+ "C25" = "Adipocytes_1",
+ "C26" = "Adipocytes_2",
+ "C27" = "B cells",
+ "C28" = "Platelets",
+ "C29" = "Plasma cells_2"
 )
 
-gg1
+# Source labels
+source_labels <- c(
+ "C8"  = "Naïve B cells (C8)",
+ "C19" = "Plasma cells_1 (C19)",
+ "C22" = "CD4 Dendritic cells (C22)",
+ "C27" = "B cells (C27)"
+)
+
+pathways_of_interest <- c(
+ # BAFF family - core to your story
+ "BAFF",          # BAFF ligand - B cell survival
+ "APRIL",         # APRIL - BAFF family, plasma cell survival
+ 
+ # Pro-fibrotic growth factors
+ "BMP",           # BMP6 - HSC activation, iron metabolism
+ "WNT",           # WNT10A - fibrosis/HSC
+ "ncWNT",         # WNT5B - non-canonical fibrosis
+ "IGF",           # IGF1 - hepatocyte survival/fibrosis
+ "VEGF",          # VEGFB - angiogenesis/fibrosis
+ "MK",            # Midkine - HSC activation
+ "GRN",           # Granulin - liver fibrosis driver
+ "GAS",           # GAS6 - TAM receptor, fibrosis resolution
+ 
+ # Inflammatory mediators
+ "MIF",           # MIF - macrophage migration, inflammation
+ "IL10",          # IL10 - immunoregulation
+ "IL16",          # IL16 - T cell chemoattractant
+ "CCL",           # CCL3 - immune recruitment
+ "CXCL",          # CXCL16 - NK/T cell recruitment
+ "TWEAK",         # TNF family - hepatocyte death/fibrosis
+ 
+ # Cell adhesion / matrix
+ "ICAM",          # ICAM2 - leukocyte adhesion
+ "VCAM",          # VCAM - immune cell recruitment
+ "PECAM1",        # PECAM1 - endothelial/immune adhesion
+ "PECAM2",        # PECAM1-CD38 contact
+ "NECTIN",        # Nectin - cell adhesion
+ "SELL",          # Selectin - leukocyte rolling/recruitment
+ "ADGRE",         # ADGRE5 - immune cell contact
+ "ADGRA",         # ADGRA2 - SDC1 receptor, plasma cell niche
+ 
+ # Immune regulation
+ "MHC-I",         # Antigen presentation to CD8 T cells
+ "MHC-II",        # Antigen presentation to CD4 T cells
+ "LAIR1",         # LAIR1 - inhibitory receptor
+ "SEMA4",         # Semaphorin - immune regulation
+ "SEMA7",         # Semaphorin - fibrosis associated
+ 
+ # Signalling
+ "CypA",          # Cyclophilin A - inflammation
+ "Prostaglandin", # PGE2 - inflammation/immune modulation
+ "CD99",          # CD99 - leukocyte migration
+ "GAS"            # GAS6 - TAM receptor (duplicate removed below)
+)
+
+# Remove duplicates
+pathways_of_interest <- unique(pathways_of_interest)
+
+# Remove prob threshold - filter by pathway and source only
+net_filtered <- net.up %>%
+ filter(as.character(source) %in% sources_of_interest,
+        pathway_name %in% pathways_of_interest) %>%
+ mutate(
+  source_label = source_labels[as.character(source)],
+  target_label = cluster_to_type[as.character(target)]
+ ) %>%
+ group_by(source, interaction_name) %>%
+ mutate(max_prob = max(prob)) %>%
+ ungroup()
+
+# Sanity check
+cat("Fibroblast interactions:\n")
+print(net_filtered[as.character(net_filtered$target) == "C13",
+                   c("source", "interaction_name_2", "pathway_name", "prob")])
+
+cat("\nTotal interactions per source:\n")
+print(table(net_filtered$source_label, useNA = "ifany"))
+
+# Build bubble data
+bubble_data_target <- net_filtered %>%
+ filter(!is.na(target_label)) %>%
+ group_by(source_label, target_label, interaction_name_2, pathway_name) %>%
+ summarise(
+  prob       = mean(prob),
+  ligand_pct = mean(ligand.pct.1, na.rm = TRUE),
+  .groups    = "drop"
+ ) %>%
+ mutate(source_label = factor(source_label,
+                              levels = c("Naïve B cells (C8)",
+                                         "Plasma cells_1 (C19)",
+                                         "CD4 Dendritic cells (C22)",
+                                         "B cells (C27)")))
+
+# Plot
+# Split by source and plot individually
+source_levels <- c("Naïve B cells (C8)", "Plasma cells_1 (C19)",
+                   "CD4 Dendritic cells (C22)", "B cells (C27)")
+
+# Get global prob range across all sources for consistent scale
+prob_range <- range(bubble_data_target$prob, na.rm = TRUE)
+pct_range  <- range(bubble_data_target$ligand_pct, na.rm = TRUE)
+
+plot_list <- list()
+
+for (src in source_levels) {
+ 
+ dat <- bubble_data_target %>% filter(source_label == src)
+ 
+ p <- ggplot(dat,
+             aes(x = interaction_name_2,
+                 y = target_label,
+                 size = ligand_pct,
+                 color = prob)) +
+  geom_vline(aes(xintercept = interaction_name_2),
+             color = "grey85", linewidth = 0.3) +
+  geom_point(alpha = 0.9) +
+  scale_size_continuous(range  = c(1, 6),
+                        limits = pct_range,    # consistent size scale
+                        name   = "Ligand expression\n(% source cells)") +
+  scale_color_viridis_c(
+   option    = "magma",
+   direction = 1,                             # force consistent direction
+   limits    = prob_range,                    # consistent colour scale
+   name      = "Communication\nprobability"
+  ) +
+  facet_grid(. ~ pathway_name, scales = "free_x", space = "free_x") +
+  labs(
+   title = paste("Upregulated interactions —", src),
+   x     = "Ligand - Receptor",
+   y     = "Target cell type"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+   axis.text.x        = element_text(angle = 90, hjust = 1, 
+                                     vjust = 0.5, size = 14),
+   axis.text.y        = element_text(size = 10),
+   axis.title         = element_text(size = 14, face = "bold"),
+   strip.background   = element_rect(fill = "grey90", color = NA),
+   strip.text.x       = element_text(face = "bold", size = 9, angle = 90,
+                                     hjust = 0, vjust = 0.5),
+   plot.title         = element_text(hjust = 0.5, face = "bold", size = 14),
+   panel.spacing      = unit(0.3, "lines"),
+   legend.position    = "right",
+   legend.title       = element_text(size = 14),
+   legend.text        = element_text(size = 14),
+   panel.grid.major.x = element_line(color = "grey90", linewidth = 0.3),
+   panel.grid.major.y = element_line(color = "grey90", linewidth = 0.3)
+  )
+ 
+ plot_list[[src]] <- p
+ 
+ # Save individual plots
+ ggsave(
+  filename = file.path(plot_dir, paste0("cellchat_bubble_",
+                                        gsub(" ", "_", gsub("[^A-Za-z0-9 ]", "", src)),
+                                        ".png")),
+  plot   = p,
+  width  = 16,
+  height = 8,
+  units  = "in",
+  dpi    = 300
+ )
+ 
+ cat("Saved:", src, "\n")
+}
+
+#### Pathway plot ####
+
 
 # visualize the enriched ligands in the second condition
 computeEnrichmentScore(net.up, species = 'human', variable.both = TRUE)
-
-
-
-
-
-
-
