@@ -308,6 +308,7 @@ ggsave(
 
 #### Create BAFF receptor expressing and absent cell obj ####
 # BAFF and its receptors clusters
+
 liverBaffreceptorObj <- subset(liverBaff , subset = seurat_clusters %in% c('8', '19', '22', '27', '29'))
 
 DefaultAssay(liverBaffreceptorObj) <- "RNA"
