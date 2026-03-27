@@ -10,6 +10,7 @@ library(ComplexHeatmap)
 library(circlize)
 library(pheatmap)
 library(viridisLite)
+library(ggrepel)
 
 # Load seurat object
 SeuObj <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/SeuObjx.rds')
@@ -306,6 +307,230 @@ ggsave(
  units = "in"
 )
 
+#### Make BAFF expressing and absent cell obj ####
+
+DefaultAssay(liverBaff) <- "RNA"
+# Keep only genes present
+genes_present <- intersect("TNFSF13B", rownames(liverBaff))
+if (length(genes_present) == 0) {
+ stop("BAFF gene is not present in the object.")
+}
+
+# Get expression matrix (assumes Seurat and using normalized 'data' slot; adjust if needed)
+expr <- tryCatch(
+ GetAssayData(liverBaff, slot = "data")[genes_present, , drop = FALSE],
+ error = function(e) liverBaff[genes_present, , drop = FALSE]  # if it's a plain matrix/dgCMatrix
+)
+
+# Compute per-cell max expression across the BAFF receptor genes
+baff_expr <- matrixStats::colMaxs(as.matrix(expr))
+
+# Label High if any receptor >= 0.25, otherwise Low
+liverBaff$BAFFstatus <- ifelse(baff_expr >= 0.25, "High", "Low")
+
+# Quick sanity checks
+table(liverBaff$BAFFstatus)
+# High  Low 
+# 3371 7745
+
+
+# check obj
+Idents(liverBaff) <- 'BAFFstatus'
+VlnPlot2(liverBaff, features = "TNFSF13B")
+
+#### Volcano plot HIGH vs LOW BAFF expressing cells Cells ####
+
+# Step 1: Differential Expression Analysis
+# Set identity to BAFFreceptorStatus
+Idents(liverBaff) <- "BAFFstatus"
+
+# Perform DE analysis (HIGH vs LOW)
+DE_results <- FindMarkers(
+ liverBaff,
+ ident.1 = "High",
+ ident.2 = "Low",
+ test.use = "wilcox",  # Wilcoxon rank-sum test
+ logfc.threshold = 0,  # Include all genes for volcano
+ min.pct = 0,          # Include all genes
+ verbose = TRUE
+)
+
+# Add gene names as column
+DE_results$gene <- rownames(DE_results)
+
+# Step 2: Add Classification Column
+
+DE_results <- DE_results %>%
+ mutate(
+  direction = case_when(
+   avg_log2FC > 0.5 & p_val_adj < 0.05 ~ "Upregulated in HIGH",
+   avg_log2FC < -0.5 & p_val_adj < 0.05 ~ "Upregulated in LOW",
+   TRUE ~ "Not Significant"
+  ),
+  neg_log10_padj = -log10(p_val_adj)
+ )
+
+# Export significant genes only
+DE_sig <- DE_results %>%
+ filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.5) %>%
+ arrange(desc(abs(avg_log2FC)))
+
+write.csv(DE_sig, "/data/home/hdx044/files/BAFF/DE_HIGH_vs_LOW_BAFF_significant.csv")
+
+
+# Genes to label on volcano plot
+
+label_gene_names <- c(
+ # BAFF receptors (confirmation of stratification)
+ "TNFRSF13B",  # TACI - BAFF receptor, confirms HIGH stratification
+ "TNFRSF17",   # BCMA - BAFF receptor, confirms HIGH stratification
+ "TNFRSF13C",  # BAFF-R - BAFF receptor, confirms HIGH stratification
+ 
+ # Fibrosis-related - Upregulated in HIGH
+ "BMP6",       # Iron metabolism + HSC activation in MASH
+ "TGFBR3L",    # TGF-beta receptor signalling
+ "WNT5B",      # Wnt signalling + fibrosis
+ "IGF1",       # Hepatocyte survival + fibrosis
+ "CTHRC1",     # ECM remodelling + HSC activation
+ "SDC1",       # Plasma cell marker + fibrosis niche (CD138)
+ "COL4A3",     # Collagen ECM component
+ 
+ # Fibrosis-related - Upregulated in LOW
+ "TGFB1",      # Canonical fibrosis driver
+ "TIMP3",      # ECM regulation + TGF-beta pathway
+ "CXCL12"      # Fibrosis niche + B cell homing
+)
+
+label_genes <- DE_results %>%
+ filter(gene %in% label_gene_names)
+
+print(table(DE_results$direction))
+
+# Step 4: Create Volcano Plot
+colors <- c(
+ "Upregulated in HIGH" = "#E41A1C",
+ "Upregulated in LOW"  = "#377EB8",
+ "Not Significant"     = "grey70"
+)
+
+p_volcano <- ggplot(DE_results, aes(x = avg_log2FC, y = neg_log10_padj)) +
+ 
+ geom_point(aes(color = direction), alpha = 0.6, size = 1.5) +
+ 
+ geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed",
+            color = "black", size = 0.5) +
+ geom_hline(yintercept = -log10(0.05), linetype = "dashed",
+            color = "black", size = 0.5) +
+ 
+ geom_text_repel(
+  data = label_genes,
+  aes(label = gene, color = direction),
+  size = 3,
+  max.overlaps = 20,
+  box.padding = 0.5,
+  point.padding = 0.3,
+  segment.color = "grey50",
+  segment.size = 0.3,
+  min.segment.length = 0,
+  show.legend = FALSE,
+  bg.color = "white",      # white box behind text
+  bg.r = 0.15              # border radius of box
+ ) +
+ scale_color_manual(values = colors) +
+ 
+ theme_classic(base_size = 12) +
+ theme(
+  legend.position = "top",
+  legend.title = element_blank(),
+  plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+  axis.line = element_line(color = "black"),
+  panel.grid.major = element_line(color = "grey90", size = 0.2)
+ ) +
+ 
+ labs(
+  title = "Differential gene: High vs Low expressing BAFF receptors B cells",
+  x = "log2 Fold Change (High vs Low)",
+  y = "-log10(Adjusted P-value)",
+  caption = "Dashed lines: |logFC| > 0.5, adjusted p < 0.05"
+ ) +
+ 
+ xlim(c(min(DE_results$avg_log2FC) - 0.5, max(DE_results$avg_log2FC) + 0.5)) +
+ ylim(c(0, max(DE_results$neg_log10_padj) * 1.1))
+
+print(p_volcano)
+
+# Save plot
+ggsave(
+ "/data/home/hdx044/plots/BAFF/volcano_plot_HIGH_vs_LOW_BAFFreceptor.png", 
+ p_volcano, 
+ width = 12, 
+ height = 5,
+ dpi = 300
+)
+
+# Step 5: Export Results
+# Export significant genes only
+DE_sig <- DE_results %>%
+ filter(p_val_adj < 0.05 & abs(avg_log2FC) > 0.5) %>%
+ arrange(desc(abs(avg_log2FC)))
+
+write.csv(DE_sig, "/data/home/hdx044/files/BAFF/DE_HIGH_vs_LOW_BAFFreceptor_significant.csv", row.names = FALSE)
+cat("Saved: DE_HIGH_vs_LOW_BAFFreceptor_significant.csv\n")
+
+#### Pathway analysis HIGH vs LOW BAFF Cells ####
+# Getting genes set
+C2 <- getGeneSets(library = "C2")
+
+# Filter gene sets with names related to Reactome (case-sensitive)
+reactome_sets <- C2[sapply(names(C2), function(x) grepl("REACTOME", x))]
+
+# Check the filtered Reactome sets
+length(reactome_sets)  # Number of Reactome gene sets
+
+DefaultAssay(liverBaff) <- "RNA"
+
+# Run Escape on Reactome pathway
+liverBaff <- runEscape(liverBaff,
+                                  method = "UCell",
+                                  gene.sets = reactome_sets, 
+                                  groups = 5000, 
+                                  min.size = 0,
+                                  new.assay.name = "escape.UCell")
+
+saveRDS(liverBaff, '/data/Blizard-AlazawiLab/rk/seurat/liverBaff.rds')
+
+ucell_mat <- GetAssayData(
+ liverBaff,
+ assay = "escape.UCell",
+ slot = "data"
+)
+
+ucell_df <- as.data.frame(t(ucell_mat))
+ucell_df$cell_id <- rownames(ucell_df)
+
+# Add celltype to ucell_df
+ucell_df$cell_type <- liverBaff$cell_type
+
+# Calculate mean pathway scores by BAFF receptor status
+pathway_BAFFmeans <- ucell_df %>%
+ group_by(cell_type) %>%
+ summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE)), .groups = "drop")
+
+# Check the result
+print(pathway_BAFFmeans)
+
+# Pivot to long format - NOTE: No 'cluster' column anymore!
+long_means <- pathway_BAFFmeans %>%
+ pivot_longer(
+  -cell_type,
+  names_to = "pathway",
+  values_to = "mean_score"
+ )
+
+# Check the result
+print(head(long_means, 20))
+
+
 #### Create BAFF receptor expressing and absent cell obj ####
 # BAFF and its receptors clusters
 
@@ -483,7 +708,7 @@ write.csv(DE_sig, "/data/home/hdx044/files/BAFF/DE_HIGH_vs_LOW_BAFFreceptor_sign
 cat("Saved: DE_HIGH_vs_LOW_BAFFreceptor_significant.csv\n")
 
 
-#### Pathway analysis ####
+#### Pathway analysis HIGH vs LOW BAFF Receptor B Cells ####
 # Getting genes set
 C2 <- getGeneSets(library = "C2")
 

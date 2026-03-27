@@ -19,7 +19,6 @@ library(stringr)
 library(purrr)
 library(ComplexHeatmap)
 library(circlize)
-options(svglite.strict.text = FALSE)
 
 # SECTION 1: LOAD AND COMBINE BCR CONTIG DATA
 
@@ -119,6 +118,10 @@ table(seuratObj$cloneSize, useNA = "ifany")
 
 saveRDS(seuratObj, '/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObjBCR.rds')
 
+#### load liver Baff receptor Obj BCR ####
+
+seuratObj <- readRDS('/data/Blizard-AlazawiLab/rk/seurat/liverBaffreceptorObjBCR.rds')
+
 # SECTION 3: JOIN BAFF STATUS INTO BCR DATA FRAME
 
 combined.BCR.liver <- bind_rows(combined.BCR.liver)
@@ -149,6 +152,10 @@ combined.BCR.liver.baff <- combined.BCR.liver %>%
   filter(!is.na(BAFFreceptorStatus))
 
 table(combined.BCR.liver.baff$BAFFreceptorStatus)
+
+contingency_table <- table(seuratObj$BAFFreceptorStatus,
+                           seuratObj$cloneSize)
+
 
 # Re-split for scRepertoire functions
 bcr_list_baff <- split(combined.BCR.liver.baff, combined.BCR.liver.baff$sample_short)
