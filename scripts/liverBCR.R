@@ -589,6 +589,70 @@ combined.BCR <- combineBCR(
 
 head(combined.BCR[[1]])
 
+#### B cell count Baseline vs Followup ####
+
+# Count B cells (unique barcodes) in each sample
+bcell_counts <- sapply(combined.BCR, function(x) length(unique(x$barcode)))
+
+# Put in a clean table
+bcell_counts_df <- data.frame(
+ Sample = names(combined.BCR),
+ Bcell_Count = bcell_counts
+)
+
+bcell_counts_df
+
+# Count B cells with productive IGH or IGL/IGK
+bcell_productive <- sapply(combined.BCR, function(x) {
+ sub <- x[!is.na(x$CTstrict), ]   # CTstrict = clonotype assignment
+ length(unique(sub$barcode))
+})
+
+data.frame(
+ Sample = names(combined.BCR),
+ Productive_Bcells = bcell_productive
+)
+
+final_counts <- merge(bcell_counts_df,
+                      data.frame(Sample = names(bcell_productive),
+                                 Productive_Bcells = bcell_productive),
+                      by = "Sample")
+
+final_counts
+
+total_cells <- c(
+ "Baseline-10291-1-LIVER" = 1690,
+ "Baseline-10738-LIVER"   = 3863,
+ "Baseline-11040-LIVER"   = 1503,
+ "Baseline-11183-LIVER"   = 2114,
+ 
+ "Followup-10291-1-LIVER" = 3011,
+ "Followup-10738-LIVER"   = 2348,
+ "Followup-11040-LIVER"   = 2639,
+ "Followup-11183-LIVER"   = 4366
+)
+
+# Add per-sample total cell counts
+final_counts$Total_Cells <- total_cells[final_counts$Sample]
+
+# Normalised B cells within each sample
+final_counts$Bcell_fraction_within_sample <- final_counts$Bcell_Count / final_counts$Total_Cells
+
+# Optional: Percentage
+final_counts$Bcell_percent_within_sample <- final_counts$Bcell_fraction_within_sample * 100
+
+#### B cell FNA final_counts ###
+final_counts
+#                   Sample Bcell_Count Productive_Bcells Total_Cells Bcell_fraction_within_sample Bcell_percent_within_sample
+#1 Baseline-10291-1-LIVER          20                12        1690                   0.01183432                    1.183432
+#2   Baseline-10738-LIVER         160               150        3863                   0.04141859                    4.141859
+#3   Baseline-11040-LIVER         293               278        1503                   0.19494345                   19.494345
+#4   Baseline-11183-LIVER         174               149        2114                   0.08230842                    8.230842
+#5 Followup-10291-1-LIVER          53                44        3011                   0.01760213                    1.760213
+#6   Followup-10738-LIVER          81                63        2348                   0.03449744                    3.449744
+#7   Followup-11040-LIVER         196               147        2639                   0.07427056                    7.427056
+#8   Followup-11183-LIVER         265               230        4366                   0.06069629                    6.069629
+
 #### Clonal expansion analysis ####
 # BCR Baseline vs Followup Analysis 
 
@@ -780,6 +844,108 @@ top100_change <- top_clone_analysis %>%
 
 cat("\n=== TOP 100 CHANGE BY DONOR ===\n")
 print(top100_change)
+
+#### B cell properties Baseline vs Followup ####
+
+seuratObj <- readRDS("/data/Blizard-AlazawiLab/rk/seurat/SeuObjFNA_LIVER_processed.rds")
+
+# Fix barcode format
+cell.barcodes <- rownames(seuratObj[[]])
+
+# removing the _1 at the end of the barcodes (adjust regex if your suffix differs)
+cell.barcodes <- stringr::str_split(cell.barcodes, "_", simplify = TRUE)[,1]
+
+# adding the prefix of the orig.ident to the barcodes, assuming that is the sample IDs
+cell.barcodes <- paste0(seuratObj$orig.ident, "_", cell.barcodes)
+seuratObj <- RenameCells(seuratObj, new.names = cell.barcodes)
+
+prefix_vector <- c(
+ "Baseline-10738-LIVER"   = "GC-WL-10738-LIVER",
+ "Followup-10738-LIVER"   = "GC-WL-11570-LIVER",
+ 
+ "Baseline-10291-1-LIVER" = "GC-WL-10291-1-LIVER",
+ "Followup-10291-1-LIVER" = "GC-WL-11303-LIVER",
+ 
+ "Baseline-11040-LIVER"   = "GC-WL-11040-LIVER",
+ "Followup-11040-LIVER"   = "GC-WL-11816-LIVER",
+ 
+ "Baseline-11183-LIVER"   = "GC-WL-11183-LIVER",
+ "Followup-11183-LIVER"   = "GC-WL-11937-LIVER"
+)
+
+for (i in seq_along(combined.BCR)) {
+ 
+ prefix <- prefix_vector[names(combined.BCR)[i]]
+ 
+ combined.BCR[[i]]$pure <- sub(".*_", "", combined.BCR[[i]]$barcode)
+ 
+ combined.BCR[[i]]$barcode <- paste0(prefix, "_", combined.BCR[[i]]$pure)
+}
+
+# Combine BCR expression into Seurat object
+seuratObj <- combineExpression(combined.BCR,
+                               seuratObj,
+                               cloneCall = "gene",
+                               group.by = "sample",
+                               proportion = FALSE,
+                               cloneSize = c(Single = 1, Small = 5, Medium = 20,
+                                             Large = 100, Hyperexpanded = 500))
+
+table(seuratObj$cloneSize, useNA = "ifany")
+
+# subset BCR cells
+
+bcr_cells <- seuratObj[, !is.na(seuratObj$cloneSize)]
+bcr_cells
+ncol(bcr_cells)   # should be 1027
+
+saveRDS(bcr_cells, '/data/Blizard-AlazawiLab/rk/seurat/FNAliverBCR.rds')
+
+# Memory B‑cell gene vector
+memoryB_genes <- c(
+ # Core memory B-cell markers
+ "CD27", "CR2", "CD24", "CD83",
+ 
+ # Naive/unswitched follicular B-cell markers
+ "MS4A1", "CD79A", "CD79B", "CD19",
+ "IGHM", "IGHD", "CXCR5",
+ 
+ # BCR signaling / survival
+ "POU2AF1", "SPIB", "BANK1", "BACH2", "BLK",
+ "FCRL1", "FCRLA", "FCRL2",
+ 
+ # B-cell regulation
+ "BCL11A", "HVCN1", "RALGPS2", "OSBPL10"
+)
+
+bcr_cells <- AddModuleScore(
+ bcr_cells,
+ features = list(inflamB_genes),
+ name = "InflamB"
+)
+
+bcr_cells <- AddModuleScore(
+ bcr_cells,
+ features = list(memoryB_genes),
+ name = "MemoryB"
+)
+
+bcr_cells$VisitLabel <- factor(
+ bcr_cells$VisitLabel,
+ levels = c(
+  "baseline 10291-1",
+  "followup 10291-1",
+  "baseline 10738",
+  "followup 10738",
+  "baseline 11040",
+  "followup 11040",
+  "baseline 11183",
+  "followup 11183"
+ )
+)
+
+VlnPlot2(bcr_cells, features = "MemoryB1", group.by = "VisitLabel")
+
 
 
 
